@@ -1,0 +1,682 @@
+#!/usr/bin/env python3
+"""memcapture — Automatic session memory capture into SQLite.
+
+Reads JSONL transcripts from Claude Code sessions and extracts useful facts
+(decisions, corrections, files touched, tool patterns, errors) using heuristics.
+No LLM calls — zero token cost.
+
+Usage:
+    uv run ~/.claude/tools/memcapture.py                    # capture current session
+    uv run ~/.claude/tools/memcapture.py --all              # capture all uncaptured sessions
+    uv run ~/.claude/tools/memcapture.py --query "react"    # FTS5 search captured facts
+    uv run ~/.claude/tools/memcapture.py --stats            # show capture statistics
+    uv run ~/.claude/tools/memcapture.py --recent 5         # show last N sessions
+    uv run ~/.claude/tools/memcapture.py --inject           # output context for SessionStart (~200 tokens)
+"""
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import sys
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+
+DB_PATH = Path.home() / ".claude" / "memory.db"
+PROJECTS_DIR = Path.home() / ".claude" / "projects"
+
+# --- Heuristic patterns ---
+
+DECISION_PATTERNS = [
+    re.compile(
+        r"\b(decided|chose|let'?s go with|going with|prefer|we'?ll use|switching to|picked)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(vamos con|decidí|elegí|prefiero|usemos|mejor usar)\b", re.IGNORECASE
+    ),
+]
+CORRECTION_PATTERNS = [
+    re.compile(r"^(no[,.\s]|not that|don'?t |stop |wrong |nope)", re.IGNORECASE),
+    re.compile(r"^(no[,.\s]|eso no|no así|para|mal|mejor no)", re.IGNORECASE),
+]
+# Only actual runtime errors — not source code that mentions errors
+ACTUAL_ERROR_PATTERNS = [
+    re.compile(r"(Traceback \(most recent call last\))", re.IGNORECASE),
+    re.compile(
+        r"^(ModuleNotFoundError|ImportError|SyntaxError|TypeError|ValueError|KeyError|AttributeError|FileNotFoundError|ConnectionError|TimeoutError|NameError|IndexError|RuntimeError|OSError|PermissionError):",
+        re.MULTILINE,
+    ),
+    re.compile(
+        r"(command not found|No such file or directory|fatal: |panic: |EACCES|ENOENT)",
+        re.IGNORECASE,
+    ),
+]
+# Lines that LOOK like errors but are actually source code — skip these
+ERROR_FALSE_POSITIVES = [
+    re.compile(
+        r"^\s*\d+\s*[\|│:]"
+    ),  # line-numbered source: "274:  raise ValueError..."
+    re.compile(
+        r"^\s*(raise|except|logger\.(error|exception)|log\.(error|exception)|#|//|/\*|\*|def |class )"
+    ),  # code definitions
+    re.compile(r"^\s*-\s+`"),  # markdown list with backticks (documentation)
+]
+
+FILE_TOOLS = {"Read", "Edit", "Write", "NotebookEdit"}
+BRANCH_RE = re.compile(r"(?:On branch|branch\s+)(\S+)")
+
+
+class MemoryDB:
+    """SQLite-backed session memory store with FTS5 search."""
+
+    def __init__(self, db_path: Path = DB_PATH):
+        self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(str(db_path))
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self._create_tables()
+
+    def _create_tables(self) -> None:
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT UNIQUE NOT NULL,
+                project TEXT NOT NULL,
+                cwd TEXT,
+                branch TEXT,
+                topic TEXT,
+                message_count INTEGER DEFAULT 0,
+                tool_count INTEGER DEFAULT 0,
+                captured_at TEXT NOT NULL,
+                transcript_path TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS facts (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                type TEXT NOT NULL CHECK(type IN ('decision', 'correction', 'error', 'topic')),
+                content TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                source_line INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS files_touched (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                path TEXT NOT NULL,
+                action TEXT NOT NULL CHECK(action IN ('read', 'edit', 'write', 'create')),
+                count INTEGER DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS tool_usage (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                tool_name TEXT NOT NULL,
+                count INTEGER DEFAULT 1,
+                UNIQUE(session_id, tool_name)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_facts_session ON facts(session_id);
+            CREATE INDEX IF NOT EXISTS idx_facts_type ON facts(type);
+            CREATE INDEX IF NOT EXISTS idx_facts_hash ON facts(content_hash);
+            CREATE INDEX IF NOT EXISTS idx_files_session ON files_touched(session_id);
+            CREATE INDEX IF NOT EXISTS idx_files_path ON files_touched(path);
+            CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+        """)
+
+        # FTS5 virtual table for full-text search
+        try:
+            self.conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(content, type, project, content='facts', content_rowid='id', tokenize='unicode61')"
+            )
+        except sqlite3.OperationalError:
+            pass  # FTS5 already exists or not available
+
+        self.conn.commit()
+
+    def _content_hash(self, content: str) -> str:
+        return hashlib.md5(content.encode()).hexdigest()[:12]
+
+    def is_captured(self, session_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        return row is not None
+
+    def fact_exists(self, content_hash: str) -> bool:
+        """Dedup: check if a fact with this hash already exists."""
+        row = self.conn.execute(
+            "SELECT 1 FROM facts WHERE content_hash = ?", (content_hash,)
+        ).fetchone()
+        return row is not None
+
+    def save_session(self, session: SessionData) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sessions (session_id, project, cwd, branch, topic, message_count, tool_count, captured_at, transcript_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session.session_id,
+                session.project,
+                session.cwd,
+                session.branch,
+                session.topic,
+                session.message_count,
+                session.tool_count,
+                datetime.now().isoformat(),
+                session.transcript_path,
+            ),
+        )
+
+        for fact in session.facts:
+            content_hash = self._content_hash(fact["content"])
+            if self.fact_exists(content_hash):
+                continue  # dedup
+            self.conn.execute(
+                "INSERT INTO facts (session_id, type, content, content_hash, source_line) VALUES (?, ?, ?, ?, ?)",
+                (
+                    session.session_id,
+                    fact["type"],
+                    fact["content"],
+                    content_hash,
+                    fact.get("source_line"),
+                ),
+            )
+
+        for path, action_counts in session.files.items():
+            for action, count in action_counts.items():
+                self.conn.execute(
+                    "INSERT INTO files_touched (session_id, path, action, count) VALUES (?, ?, ?, ?)",
+                    (session.session_id, path, action, count),
+                )
+
+        for tool, count in session.tools.items():
+            self.conn.execute(
+                "INSERT OR REPLACE INTO tool_usage (session_id, tool_name, count) VALUES (?, ?, ?)",
+                (session.session_id, tool, count),
+            )
+
+        # Rebuild FTS index for new facts
+        try:
+            self.conn.execute("INSERT INTO facts_fts(facts_fts) VALUES('rebuild')")
+        except sqlite3.OperationalError:
+            pass
+
+        self.conn.commit()
+
+    def search(self, query: str, limit: int = 20) -> list[dict]:
+        """FTS5 search with fallback to LIKE."""
+        try:
+            rows = self.conn.execute(
+                "SELECT f.type, f.content, f.created_at, s.project FROM facts f JOIN sessions s ON f.session_id = s.session_id WHERE f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH ?) ORDER BY f.created_at DESC LIMIT ?",
+                (query, limit),
+            ).fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+        except sqlite3.OperationalError:
+            pass
+        # Fallback: case-insensitive LIKE
+        rows = self.conn.execute(
+            "SELECT f.type, f.content, f.created_at, s.project FROM facts f JOIN sessions s ON f.session_id = s.session_id WHERE f.content LIKE ? ORDER BY f.created_at DESC LIMIT ?",
+            (f"%{query}%", limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def stats(self) -> dict:
+        sessions = self.conn.execute("SELECT COUNT(*) as c FROM sessions").fetchone()[
+            "c"
+        ]
+        facts = self.conn.execute(
+            "SELECT type, COUNT(*) as c FROM facts GROUP BY type"
+        ).fetchall()
+        files = self.conn.execute(
+            "SELECT COUNT(DISTINCT path) as c FROM files_touched"
+        ).fetchone()["c"]
+        top_tools = self.conn.execute(
+            "SELECT tool_name, SUM(count) as total FROM tool_usage GROUP BY tool_name ORDER BY total DESC LIMIT 10"
+        ).fetchall()
+        top_files = self.conn.execute(
+            "SELECT path, SUM(count) as total FROM files_touched GROUP BY path ORDER BY total DESC LIMIT 10"
+        ).fetchall()
+        return {
+            "sessions": sessions,
+            "facts_by_type": {r["type"]: r["c"] for r in facts},
+            "unique_files": files,
+            "top_tools": [(r["tool_name"], r["total"]) for r in top_tools],
+            "top_files": [(r["path"], r["total"]) for r in top_files],
+        }
+
+    def recent_sessions(self, limit: int = 5) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT s.session_id, s.project, s.branch, s.topic, s.message_count, s.tool_count, s.captured_at, (SELECT COUNT(*) FROM facts f WHERE f.session_id = s.session_id) as fact_count FROM sessions s ORDER BY s.captured_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def inject_context(self, project: str | None = None) -> str:
+        """Generate ~200 token context block for SessionStart injection."""
+        # Use LIKE for project matching (cwd-derived keys may be substrings)
+        if project:
+            where_s = "WHERE s.project LIKE ?"
+            where_sf = "WHERE s.project LIKE ? AND"
+            params: list = [f"%{project}%"]
+        else:
+            where_s = ""
+            where_sf = "WHERE"
+            params = []
+
+        # Last 3 sessions with topics
+        sessions = self.conn.execute(
+            f"SELECT s.topic, s.branch, s.captured_at FROM sessions s {where_s} ORDER BY s.captured_at DESC LIMIT 3",
+            params,
+        ).fetchall()
+
+        # Recent decisions (last 5, deduped)
+        decisions = self.conn.execute(
+            f"SELECT DISTINCT f.content FROM facts f JOIN sessions s ON f.session_id = s.session_id {where_sf} f.type = 'decision' ORDER BY f.created_at DESC LIMIT 5",
+            params,
+        ).fetchall()
+
+        # Recent corrections (last 3)
+        corrections = self.conn.execute(
+            f"SELECT DISTINCT f.content FROM facts f JOIN sessions s ON f.session_id = s.session_id {where_sf} f.type = 'correction' ORDER BY f.created_at DESC LIMIT 3",
+            params,
+        ).fetchall()
+
+        lines = ["<session-memory>"]
+        if sessions:
+            lines.append("Recent sessions:")
+            for s in sessions:
+                topic = s["topic"] or "?"
+                branch = s["branch"] or ""
+                lines.append(
+                    f"- {s['captured_at'][:10]} {f'({branch}) ' if branch else ''}{topic[:100]}"
+                )
+
+        if decisions:
+            lines.append("Recent decisions:")
+            for d in decisions:
+                lines.append(f"- {d['content'][:120]}")
+
+        if corrections:
+            lines.append("Recent corrections:")
+            for c in corrections:
+                lines.append(f"- {c['content'][:120]}")
+
+        lines.append("</session-memory>")
+        return "\n".join(lines)
+
+    def close(self) -> None:
+        self.conn.close()
+
+
+class SessionData:
+    """Extracted data from a single session transcript."""
+
+    def __init__(self, session_id: str, project: str, transcript_path: str):
+        self.session_id = session_id
+        self.project = project
+        self.transcript_path = transcript_path
+        self.cwd: str | None = None
+        self.branch: str | None = None
+        self.topic: str | None = None
+        self.message_count = 0
+        self.tool_count = 0
+        self.facts: list[dict] = []
+        self.files: dict[str, dict[str, int]] = {}
+        self.tools: Counter = Counter()
+        self._seen_hashes: set[str] = set()
+
+    def add_fact(
+        self, fact_type: str, content: str, source_line: int | None = None
+    ) -> None:
+        """Add a fact with inline dedup within the session."""
+        h = hashlib.md5(content.encode()).hexdigest()[:12]
+        if h in self._seen_hashes:
+            return
+        self._seen_hashes.add(h)
+        self.facts.append(
+            {"type": fact_type, "content": content, "source_line": source_line}
+        )
+
+
+class TranscriptParser:
+    """Parses JSONL transcripts and extracts structured data."""
+
+    def parse_file(self, path: Path, project: str) -> SessionData | None:
+        session_id = path.stem
+        session = SessionData(session_id, project, str(path))
+        first_user_msg = True
+
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line_num, raw_line in enumerate(lines):
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                obj = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = obj.get("type", "")
+
+            if msg_type == "user":
+                is_first = first_user_msg
+                self._process_user_message(obj, session, line_num, is_first)
+                # Track if we consumed a real user message for topic
+                if session.topic and is_first:
+                    first_user_msg = False
+            elif msg_type == "assistant":
+                self._process_assistant_message(obj, session, line_num)
+
+        if session.message_count < 2:
+            return None
+
+        return session
+
+    def _process_user_message(
+        self, obj: dict, session: SessionData, line_num: int, is_first: bool
+    ) -> None:
+        content = obj.get("message", {}).get("content", "")
+
+        # Handle tool_result blocks
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_result":
+                    self._process_tool_result(block, session, line_num)
+
+        text = self._extract_text(obj)
+        if not text:
+            return
+
+        if text.startswith("<local-command") or text.startswith("<command-name>"):
+            return
+
+        clean = re.sub(
+            r"<system-reminder>.*?</system-reminder>", "", text, flags=re.DOTALL
+        ).strip()
+        # Also strip skill/command expansion tags
+        clean = re.sub(r"<[^>]+>.*?</[^>]+>", "", clean, flags=re.DOTALL).strip()
+        if not clean or len(clean) < 5:
+            return
+
+        session.message_count += 1
+
+        # --- Topic: first real user message ---
+        if is_first and not session.topic:
+            topic = clean[:200].split("\n")[0].strip()
+            if len(topic) > 5:
+                session.topic = topic
+
+        # --- Branch: extract from git context in user messages ---
+        if not session.branch:
+            branch_match = BRANCH_RE.search(clean)
+            if branch_match:
+                session.branch = branch_match.group(1)
+
+        # --- Decisions ---
+        for pattern in DECISION_PATTERNS:
+            if pattern.search(clean):
+                for sentence in re.split(r"[.!?\n]", clean):
+                    if pattern.search(sentence) and len(sentence.strip()) > 10:
+                        session.add_fact("decision", sentence.strip()[:500], line_num)
+                        break
+                break
+
+        # --- Corrections ---
+        for pattern in CORRECTION_PATTERNS:
+            if pattern.search(clean) and len(clean) < 300:
+                session.add_fact("correction", clean[:500], line_num)
+                break
+
+    def _process_tool_result(
+        self, block: dict, session: SessionData, line_num: int
+    ) -> None:
+        """Extract actual runtime errors from tool_result blocks."""
+        is_error = block.get("is_error", False)
+        raw_content = block.get("content", "")
+
+        if isinstance(raw_content, list):
+            result_text = " ".join(
+                b.get("text", "") for b in raw_content if isinstance(b, dict)
+            )
+        elif isinstance(raw_content, str):
+            result_text = raw_content
+        else:
+            return
+
+        # --- Branch: extract from git status/branch output ---
+        if not session.branch:
+            branch_match = BRANCH_RE.search(result_text)
+            if branch_match:
+                session.branch = branch_match.group(1)
+
+        if not (is_error or any(p.search(result_text) for p in ACTUAL_ERROR_PATTERNS)):
+            return
+
+        captured = False
+        for error_line in result_text.split("\n"):
+            stripped = error_line.strip()
+            if len(stripped) < 15:
+                continue
+            # Skip false positives (source code, docs)
+            if any(fp.search(stripped) for fp in ERROR_FALSE_POSITIVES):
+                continue
+            if any(p.search(stripped) for p in ACTUAL_ERROR_PATTERNS):
+                session.add_fact("error", stripped[:500], line_num)
+                captured = True
+                break
+
+        if not captured and is_error and len(result_text.strip()) > 15:
+            first_line = result_text.strip().split("\n")[0][:500]
+            if not any(fp.search(first_line) for fp in ERROR_FALSE_POSITIVES):
+                session.add_fact("error", first_line, line_num)
+
+    def _process_assistant_message(
+        self, obj: dict, session: SessionData, line_num: int
+    ) -> None:
+        content = obj.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            return
+
+        session.message_count += 1
+
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+
+            if block.get("type") == "tool_use":
+                tool_name = block.get("name", "")
+                session.tools[tool_name] += 1
+                session.tool_count += 1
+
+                tool_input = block.get("input", {})
+
+                # --- File paths from file tools ---
+                if tool_name in FILE_TOOLS:
+                    file_path = tool_input.get("file_path", "")
+                    if file_path:
+                        action_map = {
+                            "Read": "read",
+                            "Edit": "edit",
+                            "Write": "write",
+                            "NotebookEdit": "edit",
+                        }
+                        action = action_map.get(tool_name, "read")
+                        session.files.setdefault(file_path, Counter())
+                        session.files[file_path][action] += 1
+
+                # --- Branch from Bash git commands ---
+                if tool_name == "Bash" and not session.branch:
+                    cmd = tool_input.get("command", "")
+                    branch_cmd = re.search(r"git\s+(?:checkout|switch)\s+(\S+)", cmd)
+                    if branch_cmd:
+                        session.branch = branch_cmd.group(1)
+
+    def _extract_text(self, obj: dict) -> str:
+        content = obj.get("message", {}).get("content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    texts.append(block["text"])
+            return "\n".join(texts)
+        return ""
+
+
+def find_transcripts() -> list[tuple[Path, str]]:
+    results = []
+    if not PROJECTS_DIR.exists():
+        return results
+    for project_dir in sorted(PROJECTS_DIR.iterdir()):
+        if not project_dir.is_dir():
+            continue
+        project_name = project_dir.name
+        for jsonl in sorted(
+            project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
+        ):
+            results.append((jsonl, project_name))
+    return results
+
+
+def find_current_session() -> tuple[Path, str] | None:
+    cwd = os.getcwd()
+    project_key = cwd.replace("/", "-")
+    project_dir = PROJECTS_DIR / project_key
+    if not project_dir.is_dir():
+        all_projects = sorted(
+            PROJECTS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        if all_projects:
+            project_dir = all_projects[0]
+        else:
+            return None
+
+    jsonls = sorted(
+        project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    if jsonls:
+        return jsonls[0], project_dir.name
+    return None
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Automatic session memory capture")
+    parser.add_argument(
+        "--all", action="store_true", help="Capture all uncaptured sessions"
+    )
+    parser.add_argument("--query", "-q", type=str, help="FTS5 search captured facts")
+    parser.add_argument("--stats", action="store_true", help="Show capture statistics")
+    parser.add_argument("--recent", type=int, metavar="N", help="Show last N sessions")
+    parser.add_argument(
+        "--inject",
+        action="store_true",
+        help="Output context for SessionStart (~200 tokens)",
+    )
+    parser.add_argument(
+        "--inject-project", type=str, help="Filter inject to specific project"
+    )
+    parser.add_argument(
+        "--transcript", type=str, help="Capture a specific transcript file"
+    )
+    args = parser.parse_args()
+
+    db = MemoryDB()
+    transcript_parser = TranscriptParser()
+
+    try:
+        if args.query:
+            results = db.search(args.query)
+            if not results:
+                print(f"No facts matching '{args.query}'")
+                return
+            for r in results:
+                print(f"  [{r['type']:10s}] [{r['project'][:30]}] {r['content'][:120]}")
+            print(f"\n{len(results)} results")
+            return
+
+        if args.stats:
+            s = db.stats()
+            print(f"Sessions captured: {s['sessions']}")
+            print(f"Unique files touched: {s['unique_files']}")
+            print(f"Facts by type: {s['facts_by_type']}")
+            print(f"\nTop tools:")
+            for name, count in s["top_tools"]:
+                print(f"  {name:30s} {count:5d}")
+            print(f"\nTop files:")
+            for path, count in s["top_files"]:
+                print(f"  {path:80s} {count:3d}")
+            return
+
+        if args.recent:
+            sessions = db.recent_sessions(args.recent)
+            for s in sessions:
+                topic = (s["topic"] or "")[:50]
+                print(
+                    f"  {s['captured_at'][:16]}  {s['project'][:35]:35s}  msgs={s['message_count']:3d}  facts={s['fact_count']:2d}  branch={s['branch'] or '-':15s}  {topic}"
+                )
+            return
+
+        if args.inject:
+            print(db.inject_context(args.inject_project))
+            return
+
+        # Capture mode
+        if args.transcript:
+            transcripts = [(Path(args.transcript), Path(args.transcript).parent.name)]
+        elif args.all:
+            transcripts = find_transcripts()
+        else:
+            result = find_current_session()
+            if result is None:
+                print("No transcript found for current session")
+                sys.exit(1)
+            transcripts = [result]
+
+        captured = 0
+        skipped = 0
+        for path, project in transcripts:
+            session_id = path.stem
+            if db.is_captured(session_id):
+                skipped += 1
+                continue
+
+            session = transcript_parser.parse_file(path, project)
+            if session is None:
+                skipped += 1
+                continue
+
+            db.save_session(session)
+            captured += 1
+            if not args.all:
+                print(
+                    f"Captured: {session_id[:8]}  msgs={session.message_count}  tools={session.tool_count}  facts={len(session.facts)}  files={len(session.files)}  topic={session.topic or '-'}"
+                )
+
+        if args.all:
+            print(
+                f"Captured {captured} sessions, skipped {skipped} (already captured or trivial)"
+            )
+        elif captured == 0 and skipped > 0:
+            print("Session already captured")
+
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()
