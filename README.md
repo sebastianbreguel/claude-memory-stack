@@ -17,19 +17,18 @@ Facts by type: {'correction': 75, 'decision': 64, 'error': 361}
   Open Claude Code ──► Work normally ──► Context compacts
        │                                        │
        │ Reads:                      PreCompact fires (automatic):
-       │ • <session-memory> block              │
-       │   (~350 tokens of learned     ┌───────┴────────┐
-       │    preferences & context)     │                 │
-       │                       memcapture.py    memdigest-hook.sh
-       │                       (structural,     (LLM extraction,
-       │                        zero-cost)       ~2-5K tokens)
-       │                            │                 │
-       │                            ▼                 ▼
-  Next session starts ◄── SessionStart ◄── ~/.claude/memory.db
-       │                  injects top               (SQLite)
-       │                  memories by recency
+       │ • <session-memory> block       ┌──────┼──────┬──────────┐
+       │   (~350 tokens, scoped         │      │      │          │
+       │    to current project)   memcapture  memdigest  mempatterns
+       │                         (structural) (LLM ext.) (emergent
+       │                          zero-cost  ~2-5K tok)   patterns)
+       │                              │         │            │
+       │                              ▼         ▼            ▼
+  Next session starts ◄── SessionStart ◄── ~/.claude/memory.db ─► ~/.claude/patterns/
+       │                  inject: durable=global,    (SQLite)     (Obsidian wiki)
+       │                  ephemeral+snapshot=per-project
        ▼
-  Claude knows how you work
+  Claude knows how you work in THIS project
 ```
 
 1. **Capture** — on every context compaction, `memcapture.py` parses the JSONL transcript and extracts errors, files touched, tool usage, and session topics into SQLite
