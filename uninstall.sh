@@ -16,6 +16,7 @@ rm -f "$CLAUDE_DIR/tools/memcapture.py"
 rm -f "$CLAUDE_DIR/tools/memcompile.py"
 rm -f "$CLAUDE_DIR/hooks/memcapture-hook.sh"
 rm -f "$CLAUDE_DIR/hooks/memcapture-inject.sh"
+rm -f "$CLAUDE_DIR/hooks/memdigest-hook.sh"
 rm -rf "$CLAUDE_DIR/skills/dream"
 rm -rf "$CLAUDE_DIR/skills/reflect"
 echo "  Removed tools, hooks, and skills."
@@ -35,7 +36,7 @@ hooks = settings.get("hooks", {})
 
 # Remove memcapture hooks from PreCompact
 for entry in hooks.get("PreCompact", []):
-    entry["hooks"] = [h for h in entry.get("hooks", []) if "memcapture" not in h.get("command", "")]
+    entry["hooks"] = [h for h in entry.get("hooks", []) if "memcapture" not in h.get("command", "") and "memdigest" not in h.get("command", "")]
 
 # Remove SessionStart entirely if only memcapture
 session_start = hooks.get("SessionStart", [])

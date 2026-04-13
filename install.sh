@@ -37,10 +37,13 @@ echo "  -> tools/memcompile.py (cross-project compiler)"
 
 cp "$SCRIPT_DIR/hooks/memcapture-hook.sh" "$CLAUDE_DIR/hooks/memcapture-hook.sh"
 cp "$SCRIPT_DIR/hooks/memcapture-inject.sh" "$CLAUDE_DIR/hooks/memcapture-inject.sh"
+cp "$SCRIPT_DIR/hooks/memdigest-hook.sh" "$CLAUDE_DIR/hooks/memdigest-hook.sh"
 chmod +x "$CLAUDE_DIR/hooks/memcapture-hook.sh"
 chmod +x "$CLAUDE_DIR/hooks/memcapture-inject.sh"
+chmod +x "$CLAUDE_DIR/hooks/memdigest-hook.sh"
 echo "  -> hooks/memcapture-hook.sh (PreCompact auto-capture)"
 echo "  -> hooks/memcapture-inject.sh (SessionStart inject)"
+echo "  -> hooks/memdigest-hook.sh (PreCompact LLM memory extraction)"
 
 cp "$SCRIPT_DIR/skills/dream/SKILL.md" "$CLAUDE_DIR/skills/dream/SKILL.md"
 cp "$SCRIPT_DIR/skills/reflect/SKILL.md" "$CLAUDE_DIR/skills/reflect/SKILL.md"
@@ -87,6 +90,10 @@ if not any("memcapture-hook.sh" in h.get("command", "") for h in hook_list):
     hook_list.append({"type": "command", "command": "$HOME/.claude/hooks/memcapture-hook.sh"})
     print("  Added PreCompact hook: memcapture-hook.sh")
 
+if not any("memdigest-hook.sh" in h.get("command", "") for h in hook_list):
+    hook_list.append({"type": "command", "command": "$HOME/.claude/hooks/memdigest-hook.sh"})
+    print("  Added PreCompact hook: memdigest-hook.sh")
+
 # Add memcapture-inject to SessionStart
 session_start = hooks.setdefault("SessionStart", [])
 entry2 = None
@@ -116,14 +123,14 @@ echo ""
 echo "Installation complete!"
 echo ""
 echo "What happens now:"
-echo "  - Every PreCompact: session is auto-captured to ~/.claude/memory.db"
-echo "  - Every SessionStart: last 3 sessions + decisions injected (~200 tokens)"
-echo "  - /dream: consolidate memories manually"
-echo "  - /reflect: detect patterns and propose CLAUDE.md rules"
+echo "  - Every PreCompact: session captured + LLM extracts memories (preferences, lessons, state)"
+echo "  - Every SessionStart: learned memories injected (~350 tokens)"
+echo "  - Memories auto-update via topic upsert (latest wins)"
+echo "  - Ephemeral memories expire after 7 days"
 echo ""
 echo "Commands:"
-echo "  uv run ~/.claude/tools/memcapture.py --stats       # stats"
-echo "  uv run ~/.claude/tools/memcapture.py --recent 5    # recent sessions"
-echo "  uv run ~/.claude/tools/memcapture.py -q 'query'    # search facts"
-echo "  uv run ~/.claude/tools/memcompile.py               # cross-project compile"
-echo "  uv run ~/.claude/tools/memcompile.py --lint-only   # health check"
+echo "  uv run ~/.claude/tools/memcapture.py --memories     # list learned memories"
+echo "  uv run ~/.claude/tools/memcapture.py --forget TOPIC # forget a memory"
+echo "  uv run ~/.claude/tools/memcapture.py --stats        # capture stats"
+echo "  uv run ~/.claude/tools/memcapture.py --recent 5     # recent sessions"
+echo "  uv run ~/.claude/tools/memcapture.py -q 'query'     # search facts"
