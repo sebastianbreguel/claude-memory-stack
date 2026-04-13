@@ -315,7 +315,56 @@ class MemoryDB:
         return []
 
     def inject_context(self, project: str | None = None) -> str:
-        """Generate ~200 token context block for SessionStart injection."""
+        """Generate ~350 token context block from learned memories."""
+        self.cleanup_ephemeral()
+
+        rows = self.conn.execute(
+            "SELECT topic, content, durability, last_accessed FROM memories ORDER BY last_accessed DESC"
+        ).fetchall()
+
+        if not rows:
+            return self._fallback_inject(project)
+
+        # Update last_accessed for included memories
+        topics = [r["topic"] for r in rows]
+        if topics:
+            placeholders = ",".join("?" * len(topics))
+            self.conn.execute(
+                f"UPDATE memories SET last_accessed = datetime('now') WHERE topic IN ({placeholders})",
+                topics,
+            )
+            self.conn.commit()
+
+        durable = [r for r in rows if r["durability"] == "durable"]
+        ephemeral = [r for r in rows if r["durability"] == "ephemeral"]
+
+        lines = ["<session-memory>"]
+        char_budget = 1400
+        used = 0
+
+        if durable:
+            lines.append("Learned preferences & practices:")
+            for r in durable:
+                line = f"- {r['content'][:120]}"
+                if used + len(line) > char_budget:
+                    break
+                lines.append(line)
+                used += len(line)
+
+        if ephemeral:
+            lines.append("Current context:")
+            for r in ephemeral:
+                line = f"- {r['content'][:120]}"
+                if used + len(line) > char_budget:
+                    break
+                lines.append(line)
+                used += len(line)
+
+        lines.append("</session-memory>")
+        return "\n".join(lines)
+
+    def _fallback_inject(self, project: str | None = None) -> str:
+        """Generate ~200 token context block for SessionStart injection (v1 fallback)."""
         if project:
             where_s = "WHERE s.project LIKE ?"
             where_sf = "WHERE s.project LIKE ? AND"
