@@ -327,9 +327,27 @@ class MemoryDB:
         """Generate ~350 token context block from learned memories + optional compaction snapshot."""
         self.cleanup_ephemeral()
 
-        rows = self.conn.execute(
-            "SELECT topic, content, durability, last_accessed FROM memories ORDER BY last_accessed DESC"
-        ).fetchall()
+        if project:
+            # Durable memories (preferences) stay global — general guidance applies everywhere.
+            # Ephemeral memories (current context) are prioritized by project match.
+            rows = self.conn.execute(
+                """
+                SELECT m.topic, m.content, m.durability, m.last_accessed,
+                       CASE
+                         WHEN m.durability = 'durable' THEN 1
+                         WHEN s.project LIKE ? THEN 1
+                         ELSE 0
+                       END AS keep_priority
+                FROM memories m
+                LEFT JOIN sessions s ON m.source_session = s.session_id
+                ORDER BY keep_priority DESC, m.last_accessed DESC
+                """,
+                (f"%{project}%",),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT topic, content, durability, last_accessed FROM memories ORDER BY last_accessed DESC"
+            ).fetchall()
 
         if not rows:
             output = self._fallback_inject(project)

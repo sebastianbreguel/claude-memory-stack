@@ -347,9 +347,37 @@ class PatternsOrchestrator:
         self.db_path = db_path
         self.wiki_dir = wiki_dir
         self.meta_path = self.wiki_dir / ".meta.json"
+        self.ignore_path = self.wiki_dir / ".ignore"
         self.detector = PatternDetector(db_path=db_path, wiki_dir=wiki_dir)
         self.writer = WikiWriter(wiki_dir=wiki_dir)
         self.meta = self._load_meta()
+        self.ignore_list = self._load_ignore()
+
+    def _load_ignore(self) -> list[str]:
+        """Load project substrings to ignore from .ignore file (one per line)."""
+        if not self.ignore_path.exists():
+            return []
+        return [
+            line.strip()
+            for line in self.ignore_path.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+
+    def _is_ignored(self, pattern: dict) -> bool:
+        """Return True if pattern matches any ignored project substring."""
+        if not self.ignore_list:
+            return False
+        # Check project field
+        project = pattern.get("project", "")
+        for ignore in self.ignore_list:
+            if ignore.lower() in project.lower():
+                return True
+        # Check file paths in co-edits
+        for f in pattern.get("files", []):
+            for ignore in self.ignore_list:
+                if ignore.lower() in f.lower():
+                    return True
+        return False
 
     def _load_meta(self) -> dict:
         if self.meta_path.exists():
@@ -418,6 +446,9 @@ class PatternsOrchestrator:
             all_patterns.extend(self.detector.detect_error_recurrence())
             all_patterns.extend(self.detector.detect_project_streaks())
             all_patterns.extend(self.detector.detect_tool_anomalies())
+
+        # Filter out ignored projects
+        all_patterns = [p for p in all_patterns if not self._is_ignored(p)]
 
         # Re-open detector for next calls (context manager closed it)
         self.detector = PatternDetector(db_path=self.db_path, wiki_dir=self.wiki_dir)

@@ -1,10 +1,10 @@
 ---
-name: dream
-description: "Perform a multi-phase memory consolidation pass — orienting on existing memories, gathering recent signal from logs and transcripts, merging updates into topic files, and pruning the index. Use when asked to 'dream', 'consolidate memory', 'clean up memories', 'prune memories', or 'memory maintenance'. Also trigger when memories feel stale or disorganized."
+name: memclean
+description: "Perform a multi-phase memory consolidation pass — orienting on existing memories, gathering recent signal from logs and transcripts, merging updates into topic files, and pruning the index. Use when asked to 'memclean', 'consolidate memory', 'clean up memories', 'prune memories', or 'memory maintenance'. Also trigger when memories feel stale or disorganized."
 ---
-# Dream: Memory Consolidation
+# Memclean: Memory Consolidation
 
-You are performing a dream — a reflective pass over your memory files. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly.
+You are performing a memclean — a reflective pass over your memory files. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly.
 
 Memory directory: `${MEMORY_DIR}`
 ${MEMORY_DIR_CONTEXT}

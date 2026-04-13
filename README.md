@@ -85,6 +85,18 @@ uv run ~/.claude/tools/mempatterns.py --status     # wiki stats
 
 Use `/patterns` inside Claude Code to explore patterns and discuss skill suggestions.
 
+**Ignoring projects:** add substrings to `~/.claude/patterns/.ignore` (one per line) to exclude projects from pattern detection. Useful for noisy repos you don't care to analyze.
+
+## Per-project memory
+
+When a session starts, engram injects memories scoped to where you are:
+
+- **Durable memories** (preferences, practices) — global, appear in any project
+- **Ephemeral memories** (current context, work state) — prioritized for the current project's cwd
+- **Compaction snapshots** — the last work-state snapshot is injected only for the matching project
+
+Open `vambe-datascience` and you get vambe context; switch to `engram` and you get engram context. Preferences like language and code style follow you everywhere.
+
 ## Docs
 
 - [CLI Reference](docs/cli-reference.md) — all commands, token budget, manual install, experimental features
