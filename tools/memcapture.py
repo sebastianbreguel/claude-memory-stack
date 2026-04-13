@@ -649,6 +649,31 @@ class TranscriptParser:
         return ""
 
 
+def parse_digest_output(text: str) -> list[dict]:
+    """Parse LLM digest output into memory dicts.
+    Expected format per line: topic | durability | content
+    """
+    memories = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split("|", 2)]
+        if len(parts) != 3:
+            continue
+        topic, durability, content = parts
+        if durability not in ("durable", "ephemeral"):
+            continue
+        if not topic or not content:
+            continue
+        topic = re.sub(r"[^a-z0-9_]", "_", topic.lower().strip()).strip("_")
+        if topic:
+            memories.append(
+                {"topic": topic, "content": content, "durability": durability}
+            )
+    return memories
+
+
 def find_transcripts() -> list[tuple[Path, str]]:
     results = []
     if not PROJECTS_DIR.exists():
@@ -710,6 +735,16 @@ def main() -> None:
         default=bool(os.environ.get("MEMCAPTURE_EXTRACT_FACTS")),
         help="Enable experimental regex extraction of decisions/corrections",
     )
+    parser.add_argument(
+        "--ingest-digest",
+        action="store_true",
+        help="Read digest output from stdin and upsert into memories table",
+    )
+    parser.add_argument(
+        "--session-id",
+        type=str,
+        help="Session ID for source tracking (used with --ingest-digest)",
+    )
     args = parser.parse_args()
 
     db = MemoryDB()
@@ -750,6 +785,19 @@ def main() -> None:
 
         if args.inject:
             print(db.inject_context(args.inject_project))
+            return
+
+        if args.ingest_digest:
+            text = sys.stdin.read()
+            memories = parse_digest_output(text)
+            for m in memories:
+                db.upsert_memory(
+                    m["topic"],
+                    m["content"],
+                    m["durability"],
+                    source_session=args.session_id,
+                )
+            print(f"Ingested {len(memories)} memories")
             return
 
         # Capture mode
