@@ -1,8 +1,8 @@
 # claude-memory-stack
 
-Give Claude Code persistent memory across sessions — near-zero ambient token cost (~200 tokens/session).
+Give Claude Code persistent memory that learns from your sessions — what you prefer, what worked, what's in progress.
 
-Every session is automatically captured into a local SQLite database. Files touched, tool usage, errors, git branch, and session topics are extracted from transcripts — no LLM calls, no external services, no API costs.
+Every session is captured into SQLite and analyzed by Claude to extract atomic memories: preferences, lessons, practices, and project state. These memories are injected at session start so Claude knows how you work. ~350 tokens ambient cost per session.
 
 ```
 $ uv run ~/.claude/tools/memcapture.py --stats
@@ -15,7 +15,7 @@ Facts by type: {'correction': 75, 'decision': 64, 'error': 361}
 
 There are several Claude Code memory repos out there. Most add significant ambient token cost per session, require external services or API keys, or install MCP servers with many tool descriptions that load into every session.
 
-This stack takes the best ideas from the ecosystem and combines them into 4 lightweight files with **~200 tokens ambient overhead**:
+This stack takes the best ideas from the ecosystem and combines them into a lightweight system with **~350 tokens ambient overhead**:
 
 | Source repo | What we took | What we skipped |
 |---|---|---|
@@ -35,24 +35,24 @@ YOUR NORMAL DAY
   Open Claude Code ──► Work normally ──► Context fills up
        │                                        │
        │ Reads:                      PreCompact fires (automatic):
-       │ • MEMORY.md (~150 tokens)              │
-       │ • CLAUDE.md (your rules)    ┌──────────┴──────────┐
-       │                             │                      │
-       │                     precompact-save.sh    memcapture-hook.sh
-       │                     (saves snapshot)      (background, fire-and-forget)
-       │                                                    │
-       │                                           memcapture.py parses JSONL:
-       │                                           • errors (real, filtered)
-       │                                           • files touched
-       │                                           • tool usage counts
-       │                                           • session topic + branch
-       │                                                    │
-       │                                                    ▼
-  Next session starts ◄─── SessionStart hook ◄─── ~/.claude/memory.db
-       │                   injects ~200 tokens            (SQLite)
-       │                   of recent context
+       │ • <session-memory> block              │
+       │   (~350 tokens of learned     ┌───────┴────────┐
+       │    preferences & context)     │                 │
+       │                       memcapture.py    memdigest-hook.sh
+       │                       (structural,     (LLM extraction,
+       │                        zero-cost)       ~2-5K tokens)
+       │                            │                 │
+       │                            │          claude --print extracts:
+       │                            │          • preferences (durable)
+       │                            │          • lessons (durable)
+       │                            │          • project state (ephemeral)
+       │                            │                 │
+       │                            ▼                 ▼
+  Next session starts ◄── SessionStart ◄── ~/.claude/memory.db
+       │                  injects top               (SQLite)
+       │                  memories by recency
        ▼
-  Claude knows what you did last session
+  Claude knows how you work
 ```
 
 ### What gets captured automatically
@@ -69,22 +69,33 @@ Every time your context compacts, `memcapture.py` parses the session transcript 
 
 Facts are **deduplicated** (MD5 hash) — the same error won't appear twice.
 
+### What gets learned (LLM-powered)
+
+After each context compaction, `memdigest-hook.sh` sends the last ~20% of the session transcript to Claude, which extracts atomic memories:
+
+| Type | Durability | Example |
+|---|---|---|
+| **Preferences** | Durable (persists) | "User prefers uv, never pip" |
+| **Lessons** | Durable (persists) | "Regex extraction of decisions had 50% false positive rate" |
+| **Practices** | Durable (persists) | "Always run ruff before commit" |
+| **Project state** | Ephemeral (7-day TTL) | "Auth migration in progress, refresh token pending" |
+
+Memories are stored as atomic facts with a **topic key** — if Claude extracts a new fact with the same topic, it replaces the old one (upsert). No contradictions, always current.
+
 ### What gets injected at SessionStart
 
-~200 tokens of context, scoped to the current project:
+~350 tokens of learned memories, scoped to the current project:
 
 ```xml
 <session-memory>
-Recent sessions:
-- 2026-04-13 (feat/auth) Add OAuth2 flow to login endpoint
-- 2026-04-12 Fix broken migration on users table
-- 2026-04-11 Refactor pipeline stages into separate modules
-Recent commits:
-- a1b2c3d Add OAuth2 flow to login endpoint
-- d4e5f6g Fix broken migration on users table
-- h7i8j9k Refactor pipeline stages
-Recent errors:
-- ModuleNotFoundError: No module named 'foo'
+Learned preferences & practices:
+- Prefers options before implementation, not direct execution
+- No docstrings/comments unless explicitly asked
+- Package manager: uv only, never pip
+- Tests: pytest, mock all externals, TDD approach
+Current context:
+- Memory stack v2: implementing LLM digest
+- Auth migration: OAuth2 flow done, refresh token pending
 </session-memory>
 ```
 
@@ -107,6 +118,15 @@ When enabled, captures:
 |---|---|---|
 | **Decisions** | Regex: "decided", "let's go with", "vamos con"... | "Decided async migration strategy: dual-engine" |
 | **Corrections** | Regex: "no,", "not that", "don't", "eso no"... | "no, me refiero que si total es 1k..." |
+
+### Memory management
+
+```bash
+uv run ~/.claude/tools/memcapture.py --memories          # list all memories
+uv run ~/.claude/tools/memcapture.py --memories "test_*"  # filter by topic
+uv run ~/.claude/tools/memcapture.py --forget "pkg_mgr"   # delete by topic
+uv run ~/.claude/tools/memcapture.py --forget --ephemeral  # clear all ephemeral
+```
 
 ## Advanced / Power Users
 
@@ -136,12 +156,13 @@ Walks all `~/.claude/projects/*/memory/*.md` directories and generates:
 | Component | Tokens | When |
 |---|---|---|
 | MEMORY.md | ~150 | Every session (already exists) |
-| SessionStart inject | ~200 | Every session (sessions + commits + errors) |
+| SessionStart inject | ~350 | Every session (learned memories) |
 | memcapture hook | 0 | Background, no LLM |
+| memdigest hook | ~2-5K input | Background, via claude --print |
 | `/dream` skill | ~700 | Only when invoked |
 | `/reflect` skill | ~500 | Only when invoked |
 | memcompile concepts | ~300 | Only when run + 1 API call |
-| **Ambient total** | **~200** | **Per session** |
+| **Ambient total** | **~350** | **Per session** |
 
 Most other memory solutions add significantly more ambient cost due to MCP tool descriptions, SessionStart knowledge injection, or background LLM workers.
 
@@ -265,12 +286,14 @@ Requires `ANTHROPIC_API_KEY` for concept compilation (uses claude-sonnet for one
 ├── memory.db                    # SQLite — auto-captured session data
 │   ├── sessions                 # id, project, branch, topic, timestamps
 │   ├── facts                    # decisions, corrections, errors (deduped)
+│   ├── memories                 # atomic learned facts (topic-keyed upsert)
 │   ├── files_touched            # path + action + count per session
 │   └── tool_usage               # tool name + count per session
 │
 ├── hooks/
 │   ├── memcapture-hook.sh       # PreCompact → background capture
-│   └── memcapture-inject.sh     # SessionStart → inject ~200 tokens
+│   ├── memdigest-hook.sh        # PreCompact → LLM memory extraction
+│   └── memcapture-inject.sh     # SessionStart → inject memories
 │
 ├── tools/
 │   ├── memcapture.py            # JSONL parser + SQLite writer + FTS5 search
@@ -311,6 +334,16 @@ CREATE TABLE facts (
     content_hash TEXT NOT NULL  -- MD5 for dedup
 );
 
+-- Memories table (v2 — learned atomic facts)
+CREATE TABLE memories (
+    topic TEXT UNIQUE NOT NULL,
+    content TEXT NOT NULL,
+    durability TEXT CHECK(durability IN ('durable', 'ephemeral')),
+    created_at TEXT,
+    last_accessed TEXT,
+    source_session TEXT
+);
+
 -- FTS5 virtual table for full-text search
 CREATE VIRTUAL TABLE facts_fts USING fts5(content, type, project);
 
@@ -321,13 +354,15 @@ CREATE TABLE tool_usage (session_id, tool_name, count);
 
 ## Design Principles
 
-1. **Zero ambient cost** — hooks run in background with no LLM calls. Only ~200 tokens injected at SessionStart.
+1. **Near-zero ambient cost** — only ~350 tokens injected at SessionStart. LLM extraction runs in background via `claude --print`.
 2. **100% local** — no external services, no API keys for capture, no cloud sync.
 3. **Regex over LLM** — fact extraction uses pattern matching, not AI. Fast, free, deterministic.
 4. **Dedup by default** — MD5 hashing prevents duplicate facts across sessions.
 5. **FTS5 search** — full-text search with unicode tokenizer, not SQL LIKE.
 6. **Advisory skills** — `/reflect` proposes rules but never writes. You stay in control.
 7. **Idempotent install** — running `install.sh` twice won't duplicate hooks or break things.
+8. **Topic-keyed upsert** — same topic always has one row. Latest extraction wins, no contradictions.
+9. **Durable vs ephemeral** — preferences persist indefinitely, project state expires in 7 days.
 
 ## License
 
