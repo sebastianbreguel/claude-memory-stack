@@ -1,6 +1,6 @@
 # claude-memory-stack
 
-Give Claude Code persistent memory across sessions — with zero ambient token cost.
+Give Claude Code persistent memory across sessions — near-zero ambient token cost (~200 tokens/session).
 
 Every session is automatically captured into a local SQLite database. Decisions, corrections, errors, files touched, and tool usage are extracted using regex heuristics — no LLM calls, no external services, no API costs.
 
@@ -13,20 +13,18 @@ Facts by type: {'correction': 75, 'decision': 64, 'error': 361}
 
 ## Why this exists
 
-There are 8+ Claude Code memory repos out there. Most of them add 1,500–5,000 tokens of ambient cost per session, require external services, or install MCP servers with dozens of tool descriptions.
+There are several Claude Code memory repos out there. Most add significant ambient token cost per session, require external services or API keys, or install MCP servers with many tool descriptions that load into every session.
 
-This stack takes the best ideas from all of them and combines them into 4 lightweight files with **zero ambient token overhead**:
+This stack takes the best ideas from the ecosystem and combines them into 4 lightweight files with **~200 tokens ambient overhead**:
 
 | Source repo | What we took | What we skipped |
 |---|---|---|
-| [claude-mem](https://github.com/thedotmack/claude-mem) (52K stars) | Auto-capture concept | LLM worker, Agent SDK, web viewer |
-| [claude-memory-compiler](https://github.com/coleam00/claude-memory-compiler) (656 stars) | compile.py + lint.py architecture | SessionEnd hooks, ambient injection |
-| [claude-diary](https://github.com/rlancemartin/claude-diary) (360 stars) | /reflect and /diary patterns | — |
-| [OpenMemory](https://github.com/CaviraOSS/OpenMemory) (3.9K stars) | Temporal decay concept | Docker, MCP server, dashboard |
-| [claude-subconscious](https://github.com/letta-ai/claude-subconscious) (2.6K stars) | Periodic reflection idea | Letta Cloud dependency, background agent |
-| [cortex](https://github.com/gambletan/cortex) | Token-budget concept | 27 MCP tools (3,500 tokens ambient) |
-| [memrosetta](https://github.com/obst2580/memrosetta) | — | NLI model overkill for <100KB |
-| [claude-user-memory](https://github.com/VAMFI/claude-user-memory) | — | Full agent framework, not memory |
+| [claude-mem](https://github.com/thedotmack/claude-mem) | Auto-capture concept | LLM worker, Agent SDK, web viewer |
+| [claude-memory-compiler](https://github.com/coleam00/claude-memory-compiler) | compile.py + lint.py architecture | SessionEnd hooks, ambient injection |
+| [claude-diary](https://github.com/rlancemartin/claude-diary) | /reflect and /diary patterns | — |
+| [OpenMemory](https://github.com/CaviraOSS/OpenMemory) | Temporal decay concept | Docker, MCP server, dashboard |
+| [claude-subconscious](https://github.com/letta-ai/claude-subconscious) | Periodic reflection idea | Letta Cloud dependency, background agent |
+| [cortex](https://github.com/gambletan/cortex) | Token-budget concept | 27 MCP tools, Rust binary |
 
 ## How it works
 
@@ -123,10 +121,7 @@ Walks all `~/.claude/projects/*/memory/*.md` directories and generates:
 | memcompile concepts | ~300 | Only when run + 1 API call |
 | **Ambient total** | **~200** | **Per session** |
 
-**For comparison:**
-- claude-mem: ~3,000–4,000 tokens/session + API calls
-- claude-subconscious: ~5,000+ tokens/session + Letta Cloud
-- cortex: ~3,500 tokens/session (27 MCP tool descriptions)
+Most other memory solutions add significantly more ambient cost due to MCP tool descriptions, SessionStart knowledge injection, or background LLM workers.
 
 ## Install
 

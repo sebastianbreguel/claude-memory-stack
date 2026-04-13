@@ -37,17 +37,23 @@ PROJECTS_DIR = Path.home() / ".claude" / "projects"
 # --- Heuristic patterns ---
 
 DECISION_PATTERNS = [
+    # Require context: "decided to/that/on", "let's go with X", "switching to X"
     re.compile(
-        r"\b(decided|chose|let'?s go with|going with|prefer|we'?ll use|switching to|picked)\b",
+        r"\b(decided\s+(to|that|on)|chose\s+\w|let'?s go with|we'?ll use|switching to|picked\s+\w)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(vamos con|decidí|elegí|prefiero|usemos|mejor usar)\b", re.IGNORECASE
+        r"\b(vamos con\s+\w|decidí\s+\w|elegí\s+\w|usemos\s+\w|mejor usar\s+\w)",
+        re.IGNORECASE,
     ),
+    # "prefer X over Y" or "prefer to" — not bare "prefer"
+    re.compile(r"\bprefer\s+(to\s+\w|\w+\s+over)\b", re.IGNORECASE),
+    re.compile(r"\bprefiero\s+\w", re.IGNORECASE),
 ]
 CORRECTION_PATTERNS = [
-    re.compile(r"^(no[,.\s]|not that|don'?t |stop |wrong |nope)", re.IGNORECASE),
-    re.compile(r"^(no[,.\s]|eso no|no así|para|mal|mejor no)", re.IGNORECASE),
+    re.compile(r"^(no[,.\s]|not that|don'?t |stop |wrong |nope[,.\s])", re.IGNORECASE),
+    # Spanish: "eso no", "no así", "mejor no" — removed bare "para" and "mal" (too broad)
+    re.compile(r"^(no[,.\s]|eso no|no así|mejor no)", re.IGNORECASE),
 ]
 # Only actual runtime errors — not source code that mentions errors
 ACTUAL_ERROR_PATTERNS = [
@@ -136,13 +142,13 @@ class MemoryDB:
             CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
         """)
 
-        # FTS5 virtual table for full-text search
+        # FTS5 standalone table — we insert directly, no content sync needed
         try:
             self.conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(content, type, project, content='facts', content_rowid='id', tokenize='unicode61')"
+                "CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(content, type, project, tokenize='unicode61')"
             )
         except sqlite3.OperationalError:
-            pass  # FTS5 already exists or not available
+            pass  # FTS5 not available on this SQLite build
 
         self.conn.commit()
 
@@ -192,6 +198,14 @@ class MemoryDB:
                     fact.get("source_line"),
                 ),
             )
+            # Incremental FTS insert — no full rebuild needed
+            try:
+                self.conn.execute(
+                    "INSERT INTO facts_fts (content, type, project) VALUES (?, ?, ?)",
+                    (fact["content"], fact["type"], session.project),
+                )
+            except sqlite3.OperationalError:
+                pass
 
         for path, action_counts in session.files.items():
             for action, count in action_counts.items():
@@ -206,28 +220,30 @@ class MemoryDB:
                 (session.session_id, tool, count),
             )
 
-        # Rebuild FTS index for new facts
-        try:
-            self.conn.execute("INSERT INTO facts_fts(facts_fts) VALUES('rebuild')")
-        except sqlite3.OperationalError:
-            pass
-
         self.conn.commit()
 
     def search(self, query: str, limit: int = 20) -> list[dict]:
         """FTS5 search with fallback to LIKE."""
         try:
             rows = self.conn.execute(
-                "SELECT f.type, f.content, f.created_at, s.project FROM facts f JOIN sessions s ON f.session_id = s.session_id WHERE f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH ?) ORDER BY f.created_at DESC LIMIT ?",
+                "SELECT content, type, project, rank FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?",
                 (query, limit),
             ).fetchall()
             if rows:
-                return [dict(r) for r in rows]
+                return [
+                    {
+                        "type": r["type"],
+                        "content": r["content"],
+                        "project": r["project"],
+                        "created_at": "",
+                    }
+                    for r in rows
+                ]
         except sqlite3.OperationalError:
             pass
         # Fallback: case-insensitive LIKE
         rows = self.conn.execute(
-            "SELECT f.type, f.content, f.created_at, s.project FROM facts f JOIN sessions s ON f.session_id = s.session_id WHERE f.content LIKE ? ORDER BY f.created_at DESC LIMIT ?",
+            "SELECT f.type, f.content, f.created_at, s.project FROM facts f JOIN sessions s ON f.session_id = s.session_id WHERE f.content LIKE ? COLLATE NOCASE ORDER BY f.created_at DESC LIMIT ?",
             (f"%{query}%", limit),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -265,11 +281,12 @@ class MemoryDB:
 
     def inject_context(self, project: str | None = None) -> str:
         """Generate ~200 token context block for SessionStart injection."""
-        # Use LIKE for project matching (cwd-derived keys may be substrings)
+        # Prefix match: project key from cwd is a prefix of the stored project name
+        # e.g. "-Users-seba-myproject" matches "-Users-seba-myproject-packages-backend"
         if project:
             where_s = "WHERE s.project LIKE ?"
             where_sf = "WHERE s.project LIKE ? AND"
-            params: list = [f"%{project}%"]
+            params: list = [f"{project}%"]
         else:
             where_s = ""
             where_sf = "WHERE"
