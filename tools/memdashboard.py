@@ -835,7 +835,6 @@ def generate_html(output_path: Path) -> None:
     ignore_list = load_ignore_list()
 
     stats = query_stats(conn, ignore_list)
-    activity = query_activity_data(conn, ignore_list)
     projects = query_projects(conn, ignore_list)
     tools = query_tools(conn, ignore_list)
     memories = query_memories(conn)
@@ -860,9 +859,6 @@ def generate_html(output_path: Path) -> None:
         patterns,
         profiles,
     )
-    output_path.write_text(html, encoding="utf-8")
-    print(f"Dashboard generated: {output_path}")
-
     output_path.write_text(html, encoding="utf-8")
     print(f"Dashboard generated: {output_path}")
 
