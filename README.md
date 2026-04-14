@@ -120,6 +120,7 @@ Open `vambe-datascience` and you get vambe context. Switch to `claude-engram` an
 
 - [CLI Reference](docs/cli-reference.md) — all commands, token budget, manual install, experimental features
 - [Architecture](docs/architecture.md) — file layout, SQLite schema, design principles
+- [Privacy Policy](docs/privacy.md) — what's captured, what's not, zero network activity
 
 ## License
 

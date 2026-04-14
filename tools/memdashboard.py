@@ -411,6 +411,71 @@ def _synthesize_project_about(
     return base + focus
 
 
+def _synthesize_about_text(
+    preferences: list[dict],
+    practices: list[dict],
+    langs: list[str],
+    top_tools: list[str],
+    total_sessions: int,
+) -> str:
+    """Build a one-paragraph 'about' summary from durable memories and behavioral data."""
+    if not preferences and not practices and not langs:
+        return "Not enough data yet to build a developer profile. Keep using Claude Code and preferences will appear here."
+
+    fragments: list[str] = []
+
+    # Language identity
+    if langs:
+        if len(langs) == 1:
+            fragments.append(f"{langs[0]} developer")
+        elif len(langs) == 2:
+            fragments.append(f"{langs[0]} and {langs[1]} developer")
+        else:
+            fragments.append(
+                f"{'/'.join(langs[:2])} developer (also touches {', '.join(langs[2:4])})"
+            )
+
+    # Extract preference signals from memory content
+    pref_signals: list[str] = []
+    for p in preferences[:6]:
+        content = p["content"].lower()
+        # Extract short preference phrases
+        for keyword in ("prefers ", "uses ", "always ", "never ", "wants ", "refuses "):
+            idx = content.find(keyword)
+            if idx != -1:
+                snippet = p["content"][idx : idx + 60].strip()
+                # Trim to sentence boundary
+                for end in (".", ",", ";", "\n"):
+                    pos = snippet.find(end)
+                    if pos > 10:
+                        snippet = snippet[:pos]
+                        break
+                pref_signals.append(snippet)
+                break
+
+    if pref_signals:
+        fragments.append(", ".join(pref_signals[:4]))
+
+    # Tool preference
+    if top_tools:
+        fragments.append(f"most-used tools: {', '.join(top_tools[:3])}")
+
+    # Session volume context
+    if total_sessions > 50:
+        fragments.append(f"power user with {total_sessions}+ sessions")
+    elif total_sessions > 10:
+        fragments.append(f"active user across {total_sessions} sessions")
+
+    if not fragments:
+        return "Developer profile is still being built from your sessions."
+
+    # Join into a readable paragraph
+    about = ". ".join(f.capitalize() if i == 0 else f for i, f in enumerate(fragments))
+    if not about.endswith("."):
+        about += "."
+    return about
+
+
 def query_developer_profile(
     conn: sqlite3.Connection,
     ignore_list: list[str],
@@ -419,7 +484,15 @@ def query_developer_profile(
     tools: list[dict],
     projects: list[dict],
 ) -> dict:
-    """Synthesize a developer profile from memories + behavioral data."""
+    """Synthesize a developer profile from memories + behavioral data.
+
+    Aggregates:
+    - Total sessions, unique projects, date range (first to last session)
+    - Most used tools (top 5 from tool_usage table)
+    - Most active projects (top 5 from sessions table)
+    - Durable memories count
+    - A one-paragraph "about" text synthesized from durable memories
+    """
     # Categorize durable memories
     preferences: list[dict] = []
     practices: list[dict] = []
@@ -483,6 +556,40 @@ def query_developer_profile(
     # Most recent activity date, for context
     last_active = max((a["day"] for a in activity), default=None) if activity else None
 
+    # ── Aggregate stats for the profile summary ──
+    where_sess, params_sess = _ignore_where(ignore_list)
+    total_sessions = conn.execute(
+        f"SELECT COUNT(*) as c FROM sessions{where_sess}", params_sess
+    ).fetchone()["c"]
+    unique_projects = conn.execute(
+        f"SELECT COUNT(DISTINCT project) as c FROM sessions{where_sess}", params_sess
+    ).fetchone()["c"]
+
+    # Date range (first to last session)
+    first_row = conn.execute(
+        f"SELECT MIN(captured_at) as first_date FROM sessions{where_sess}", params_sess
+    ).fetchone()
+    last_row = conn.execute(
+        f"SELECT MAX(captured_at) as last_date FROM sessions{where_sess}", params_sess
+    ).fetchone()
+    first_session = (
+        first_row["first_date"][:10] if first_row and first_row["first_date"] else None
+    )
+    last_session = (
+        last_row["last_date"][:10] if last_row and last_row["last_date"] else None
+    )
+
+    # Durable memories count
+    durable_count = sum(1 for m in memories if m["durability"] == "durable")
+
+    # Top projects (names)
+    top_projects = [p["project"] for p in projects[:5]]
+
+    # Synthesize about text
+    about = _synthesize_about_text(
+        preferences, practices, langs, top_tools, total_sessions
+    )
+
     return {
         "preferences": preferences[:8],
         "practices": practices[:6],
@@ -494,7 +601,14 @@ def query_developer_profile(
         "streak": streak,
         "top_tools": top_tools,
         "languages": langs,
-        "top_projects": [p["project"] for p in projects[:5]],
+        "top_projects": top_projects,
+        # New fields for the profile summary
+        "total_sessions": total_sessions,
+        "unique_projects": unique_projects,
+        "first_session": first_session,
+        "last_session": last_session,
+        "durable_count": durable_count,
+        "about": about,
     }
 
 
@@ -626,26 +740,49 @@ def _build_profiles_html(profiles: list[dict]) -> str:
 
 
 def _build_developer_profile_html(dp: dict) -> str:
-    """Render the developer profile section."""
+    """Render the developer profile section with about summary, stats grid, and lists."""
     if not dp:
         return ""
 
-    # Stat tiles
+    # About paragraph
+    about_text = dp.get("about", "")
+    about_html = ""
+    if about_text:
+        about_html = f'<div class="dp-about">{_html_escape(about_text)}</div>'
+
+    # Key stats grid: sessions, projects, memories, date range, streak, peak
+    total_sessions = dp.get("total_sessions", dp.get("total_active_sessions", 0))
+    unique_projects = dp.get("unique_projects", 0)
+    durable_count = dp.get("durable_count", 0)
+    first_session = dp.get("first_session", "-")
+    last_session = dp.get("last_session", "-")
     streak_val = dp["streak"]
-    streak_label = "day streak" if streak_val == 1 else "day streak"
     peak = dp["peak_day"]
     peak_sessions = peak["count"] if peak else 0
     peak_day_str = peak["day"] if peak else "-"
 
+    date_range = (
+        f"{first_session} to {last_session}" if first_session and last_session else "-"
+    )
+
     tiles = [
-        ("streak", streak_val, streak_label),
-        ("active days", dp["active_days"], "with sessions"),
-        ("peak", peak_sessions, f"on {peak_day_str}" if peak else "no activity"),
-        ("top langs", len(dp["languages"]), "languages touched"),
+        (total_sessions, "total sessions"),
+        (unique_projects, "projects"),
+        (durable_count, "memories"),
+        (streak_val, "day streak"),
+        (dp["active_days"], "active days"),
+        (peak_sessions, f"peak ({peak_day_str})" if peak else "peak"),
     ]
     tiles_html = ""
-    for _key, val, sub in tiles:
+    for val, sub in tiles:
         tiles_html += f'<div class="dp-tile"><div class="dp-tile-num">{val}</div><div class="dp-tile-sub">{_html_escape(sub)}</div></div>'
+
+    # Date range row
+    date_range_html = (
+        f'<div class="dp-date-range">Active from <strong>{_html_escape(first_session or "-")}</strong> to <strong>{_html_escape(last_session or "-")}</strong></div>'
+        if first_session
+        else ""
+    )
 
     # Languages
     langs_html = ""
@@ -654,12 +791,19 @@ def _build_developer_profile_html(dp: dict) -> str:
     if not langs_html:
         langs_html = '<span class="dp-empty">No language data yet</span>'
 
-    # Top tools
+    # Top tools as a small list
     tools_html = ""
     for t in dp["top_tools"]:
         tools_html += f'<span class="dp-tool">{_html_escape(t)}</span>'
     if not tools_html:
         tools_html = '<span class="dp-empty">No tool data yet</span>'
+
+    # Top projects as a small list
+    top_projects_html = ""
+    for proj in dp.get("top_projects", []):
+        top_projects_html += f'<span class="dp-proj">{_html_escape(proj)}</span>'
+    if not top_projects_html:
+        top_projects_html = '<span class="dp-empty">No project data yet</span>'
 
     # Preferences + practices
     prefs_html = ""
@@ -679,6 +823,8 @@ def _build_developer_profile_html(dp: dict) -> str:
         )
 
     return f"""<div class="dp-card">
+{about_html}
+{date_range_html}
 <div class="dp-tiles">{tiles_html}</div>
 <div class="dp-row">
   <div class="dp-col">
@@ -688,6 +834,16 @@ def _build_developer_profile_html(dp: dict) -> str:
   <div class="dp-col">
     <div class="dp-label">Most-used tools</div>
     <div class="dp-chips">{tools_html}</div>
+  </div>
+</div>
+<div class="dp-row">
+  <div class="dp-col">
+    <div class="dp-label">Top projects</div>
+    <div class="dp-chips">{top_projects_html}</div>
+  </div>
+  <div class="dp-col">
+    <div class="dp-label">Languages</div>
+    <div class="dp-chips">{langs_html}</div>
   </div>
 </div>
 <div class="dp-row">
@@ -1041,6 +1197,35 @@ body {{ font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:va
     border-radius:var(--radius);
     padding:28px;
     margin-bottom:48px;
+}}
+.dp-about {{
+    font-size:14px;
+    color:var(--text2);
+    line-height:1.65;
+    padding:16px 18px;
+    background:linear-gradient(135deg, rgba(37,99,235,0.04), rgba(124,58,237,0.04));
+    border-left:3px solid var(--accent);
+    border-radius:0 10px 10px 0;
+    margin-bottom:24px;
+}}
+.dp-date-range {{
+    font-size:12px;
+    color:var(--text-muted);
+    margin-bottom:20px;
+    padding-left:2px;
+}}
+.dp-date-range strong {{
+    color:var(--text2);
+    font-weight:600;
+}}
+.dp-proj {{
+    padding:4px 11px;
+    border-radius:999px;
+    font-size:12px;
+    font-weight:500;
+    background:rgba(124,58,237,0.08);
+    border:1px solid rgba(124,58,237,0.18);
+    color:var(--purple);
 }}
 .dp-tiles {{
     display:grid;

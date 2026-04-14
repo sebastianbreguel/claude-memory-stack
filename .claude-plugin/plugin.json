@@ -4,5 +4,6 @@
   "version": "0.1.0",
   "author": "Sebastian Breguel",
   "homepage": "https://github.com/sebastianbreguel/claude-engram",
-  "license": "MIT"
+  "license": "MIT",
+  "privacy_policy": "https://github.com/sebastianbreguel/claude-engram/blob/main/docs/privacy.md"
 }
