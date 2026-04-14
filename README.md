@@ -111,6 +111,50 @@ claude-engram injects memories scoped to where you are:
 
 Open `vambe-datascience` and you get vambe context. Switch to `claude-engram` and you get claude-engram context.
 
+## Architecture
+
+```
+                          Claude Code
+                     ┌─────────────────┐
+                     │   SessionStart  │──────────────────────────────────┐
+                     │   PreCompact    │──────────────┐                  │
+                     └─────────────────┘              │                  │
+                                                      ▼                  ▼
+                                            engram.py on-precompact    engram.py on-session-start
+                                                      │                  │
+                                  ┌───────────────────┼──────────┐       │
+                                  ▼                   ▼          ▼       ▼
+                            [sync]               [async x2]   [sync]  [sync]
+                          memcapture            Haiku 4.5    mempatterns  memcapture
+                          parse JSONL         ┌───────────┐  update wiki  --inject
+                          upsert SQLite       │  digest    │     │        │
+                               │              │  snapshot  │     │        │
+                               ▼              └─────┬─────┘     ▼        ▼
+                                                    │      ~/.claude/  ~350 tokens
+                          ┌─────────────────────────┼──────┐ patterns/  injected as
+                          │      memory.db          │      │           additionalContext
+                          │                         ▼      │
+                          │  sessions ← facts              │
+                          │  memories ← (topic upsert)     │
+                          │  compactions ← snapshots        │
+                          │  files_touched, tool_usage      │
+                          │  facts_fts (FTS5)               │
+                          └────────────────────────────────-┘
+```
+
+**Data flow:**
+- **PreCompact (between sessions):** transcript → SQLite capture (sync) → two detached Haiku subprocesses extract memories + snapshot (async, fire-and-forget) → pattern wiki updated (sync)
+- **SessionStart (on open):** read `cwd` → query memories by project scope → inject ~350 tokens as invisible context + optional banner
+- **Concurrency:** no locks — `PRAGMA busy_timeout=5000` + `UNIQUE(topic)` absorb races
+
+**Files (3 Python, 0 external deps):**
+
+| File | Lines | Role |
+|---|---|---|
+| `engram.py` | ~400 | CLI + hook orchestrator, Haiku dispatch, prompt templates |
+| `memcapture.py` | ~1,100 | JSONL parser, SQLite schema, inject builder, FTS5 search |
+| `mempatterns.py` | ~800 | Pattern detection (file co-edits, tool habits, errors), wiki generator |
+
 ## At a glance
 
 ![claude-engram — session memory for Claude Code](docs/claude-engram-explainer.svg)

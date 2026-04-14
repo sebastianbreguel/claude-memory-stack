@@ -77,7 +77,7 @@ CREATE TABLE facts (
     content_hash TEXT NOT NULL,        -- MD5[0:12] for dedup
     source_line INTEGER,
     created_at TEXT DEFAULT (datetime('now')),
-    -- v2 widening (nullable, added via idempotent ALTER):
+    -- v2 columns (nullable, unused in v1):
     subject TEXT, predicate TEXT, object TEXT, confidence REAL
 );
 
@@ -116,7 +116,7 @@ PRAGMA busy_timeout = 5000;            -- collision absorber
 5. **Topic-keyed upsert** — `UNIQUE(topic)` on `memories`. Same topic = one row, latest wins. No contradictions, no merge logic.
 6. **Durable vs ephemeral** — preferences persist indefinitely; project state expires in 7 days. Ephemeral memories are scoped to the current `cwd`.
 7. **Collision absorber, not coordination** — two PreCompact hooks racing on the same session are absorbed by `PRAGMA busy_timeout=5000` + `UNIQUE(topic)`. No lockfile, no coordinator. Cost: occasional redundant Haiku call.
-8. **Idempotent schema migrations** — `facts` widens via `ALTER TABLE ADD COLUMN` for nullable columns only. No `PRAGMA user_version` framework. v2 typed constraints will need one.
+8. **Schema-in-CREATE** — all columns live in the `CREATE TABLE IF NOT EXISTS` statement. No runtime migration probes. v2 typed constraints will need a `PRAGMA user_version` framework.
 9. **Patterns runs on previous session's memories** — PreCompact order is: capture (sync) → digest (async) → patterns (sync). Patterns reflect what the last compaction wrote, not this one. By design.
 10. **Advisory skills** — `/memclean`, `/reflect`, `/patterns` can suggest but never auto-write. You stay in control.
 11. **Idempotent install** — re-running `install.sh` strips legacy `.sh` hook entries from `settings.json` and reinstalls the unified `engram.py` hooks. `memory.db` and `patterns/` are preserved.
