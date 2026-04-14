@@ -462,6 +462,14 @@ class MemoryDB:
             lines.append("</session-memory>")
             output = "\n".join(lines)
 
+        # Append active patterns (co-edits, recurring errors)
+        try:
+            patterns_block = self._read_active_patterns()
+            if patterns_block:
+                output += "\n" + patterns_block
+        except Exception:
+            pass
+
         # Append compaction snapshot if available
         if project:
             snapshot = self.get_latest_snapshot(project)
@@ -469,6 +477,38 @@ class MemoryDB:
                 output += "\n" + self._format_snapshot(snapshot["snapshot"])
 
         return output
+
+    @staticmethod
+    def _read_active_patterns(wiki_dir: Path | None = None, max_patterns: int = 5) -> str:
+        """Read top active co_edit/error_recurrence patterns from wiki. Returns compact text or ''."""
+        wiki = wiki_dir or (Path.home() / ".claude" / "patterns")
+        patterns_dir = wiki / "patterns"
+        if not patterns_dir.exists():
+            return ""
+        entries: list[tuple[int, str]] = []
+        for pf in patterns_dir.glob("*.md"):
+            try:
+                content = pf.read_text()
+            except Exception:
+                continue
+            status_m = re.search(r"^status:\s*(\S+)", content, re.MULTILINE)
+            if not status_m or status_m.group(1) != "active":
+                continue
+            kind_m = re.search(r"^kind:\s*(\S+)", content, re.MULTILINE)
+            kind = kind_m.group(1) if kind_m else ""
+            if kind not in ("co_edit", "error_recurrence"):
+                continue
+            conf_m = re.search(r"^confidence:\s*(\d+)", content, re.MULTILINE)
+            conf = int(conf_m.group(1)) if conf_m else 0
+            desc_m = re.search(r"^# .+\n\n(.+)", content, re.MULTILINE)
+            if not desc_m:
+                continue
+            entries.append((conf, desc_m.group(1).strip()[:120]))
+        if not entries:
+            return ""
+        entries.sort(key=lambda x: -x[0])
+        lines = [e[1] for e in entries[:max_patterns]]
+        return "<patterns>\n" + "\n".join(f"- {l}" for l in lines) + "\n</patterns>"
 
     def _format_snapshot(self, snapshot_json: str, max_chars: int = 600) -> str:
         """Format a compaction snapshot as an injection block (capped to ~150 tokens)."""

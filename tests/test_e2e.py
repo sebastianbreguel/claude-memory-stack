@@ -189,3 +189,27 @@ def test_ingest_digest_is_idempotent(tmp_home):
     assert first.count("prefers uv over pip") == second.count("prefers uv over pip"), (
         "repeated ingest of identical digest produced duplicate memories"
     )
+
+
+def test_inject_includes_active_patterns(tmp_home):
+    """inject_context appends active co_edit and error_recurrence patterns from wiki."""
+    wiki = tmp_home / ".claude" / "patterns" / "patterns"
+    wiki.mkdir(parents=True)
+    (wiki / "co-edit-a-b.md").write_text(
+        "---\nkind: co_edit\nconfidence: 5\nstatus: active\n---\n\n# co-edit-a-b\n\nFiles a.py and b.py edited together (5 sessions).\n"
+    )
+    (wiki / "error-abc.md").write_text(
+        "---\nkind: error_recurrence\nconfidence: 3\nstatus: active\n---\n\n# error-abc\n\nError recurs: ImportError (3 times).\n"
+    )
+    # stale pattern should be excluded
+    (wiki / "stale-one.md").write_text("---\nkind: co_edit\nconfidence: 10\nstatus: stale\n---\n\n# stale-one\n\nShould not appear.\n")
+    # project_streak should be excluded (not co_edit/error_recurrence)
+    (wiki / "streak-proj.md").write_text(
+        "---\nkind: project_streak\nconfidence: 7\nstatus: active\n---\n\n# streak-proj\n\nProject had 7 day streak.\n"
+    )
+    result = _memcap(["--inject"])
+    assert "<patterns>" in result.stdout
+    assert "a.py and b.py edited together" in result.stdout
+    assert "ImportError" in result.stdout
+    assert "Should not appear" not in result.stdout
+    assert "7 day streak" not in result.stdout
