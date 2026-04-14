@@ -12,10 +12,6 @@ uv run ~/.claude/tools/engram.py stats              # counts, durability split, 
 uv run ~/.claude/tools/engram.py memories           # list all learned memories
 uv run ~/.claude/tools/engram.py forget <topic>     # delete a memory by topic
 
-# Visualize
-uv run ~/.claude/tools/engram.py dashboard          # generate + open HTML dashboard
-uv run ~/.claude/tools/engram.py dashboard --output /tmp/d.html --no-open
-
 # Pattern wiki (emergent, opt-in exploration)
 uv run ~/.claude/tools/engram.py patterns --report   # detected file co-edits, tool bias, recurring errors
 uv run ~/.claude/tools/engram.py patterns --status   # wiki stats
@@ -65,16 +61,6 @@ echo '{"session_id":"abc","cwd":"/path/to/project"}' | \
   uv run ~/.claude/tools/engram.py on-session-start
 ```
 
-## Deprecated — `compile` / `export-concepts`
-
-```bash
-uv run ~/.claude/tools/engram.py compile              # manual cross-project compile (deprecated)
-uv run ~/.claude/tools/engram.py compile --lint-only
-uv run ~/.claude/tools/engram.py export-concepts      # regenerate ~/.claude/compiled-knowledge/concepts.md
-```
-
-These print a deprecation notice. v2 replaces the markdown artifact with an automatic cross-project `concepts` table in `memory.db`. See `CHANGELOG.md`.
-
 ## Skills (on-demand, zero cost until invoked)
 
 | Command | What it does |
@@ -106,9 +92,7 @@ If you skip `install.sh`:
 # Copy tools
 cp tools/engram.py        ~/.claude/tools/
 cp tools/memcapture.py    ~/.claude/tools/
-cp tools/memcompile.py    ~/.claude/tools/
 cp tools/mempatterns.py   ~/.claude/tools/
-cp tools/memdashboard.py  ~/.claude/tools/
 chmod +x ~/.claude/tools/engram.py
 
 # Copy skills

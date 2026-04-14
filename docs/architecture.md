@@ -13,9 +13,7 @@ claude-engram is a Claude Code plugin with **two hooks, one Python entrypoint**,
 ├── tools/
 │   ├── engram.py                # Unified CLI + hook orchestrator (single entrypoint)
 │   ├── memcapture.py            # JSONL parser + SQLite writer + FTS5 search
-│   ├── memcompile.py            # Cross-project concept compiler (deprecated, see CHANGELOG)
-│   ├── mempatterns.py           # Pattern detection (file co-edits, tool bias, errors)
-│   └── memdashboard.py          # HTML dashboard generator
+│   └── mempatterns.py           # Pattern detection (file co-edits, tool bias, errors)
 │
 └── skills/
     ├── memclean/SKILL.md        # /memclean — consolidation

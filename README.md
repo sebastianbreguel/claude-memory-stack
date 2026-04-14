@@ -41,7 +41,7 @@ Handoffs and preferences are the core — they inject automatically on every ses
 
 ## Install
 
-**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [uv](https://docs.astral.sh/uv/), [jq](https://jqlang.github.io/jq/)
+**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [uv](https://docs.astral.sh/uv/)
 
 **As a Claude Code plugin (recommended):**
 
@@ -87,7 +87,6 @@ Everything lives in `~/.claude/memory.db` (SQLite) and `~/.claude/patterns/` (ma
 uv run ~/.claude/tools/engram.py stats              # what claude-engram knows
 uv run ~/.claude/tools/engram.py memories           # list learned memories
 uv run ~/.claude/tools/engram.py forget "topic"     # delete a memory
-uv run ~/.claude/tools/engram.py dashboard          # visual dashboard
 uv run ~/.claude/tools/engram.py patterns --report  # detected patterns
 ```
 

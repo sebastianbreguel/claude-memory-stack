@@ -167,6 +167,17 @@ def test_facts_table_has_typed_columns(tmp_home):
     assert {"subject", "predicate", "object", "confidence"}.issubset(cols), f"facts table missing typed columns, has: {cols}"
 
 
+def test_parse_digest_dedupes_duplicate_topics_in_batch(tmp_home):
+    """Same topic twice in one batch → last-wins, single row. Guards the race window
+    where Haiku emits the same topic with different content in one call."""
+    _memcap(["--transcript", str(FIXTURE)])
+    digest = "package_manager | durable | prefers uv\npackage_manager | durable | prefers uv over pip strictly\n"
+    _memcap(["--ingest-digest", "--session-id", "s1", "--project", "p1"], input=digest)
+    memories = _memcap(["--memories"]).stdout
+    assert memories.count("prefers uv") == 1, f"duplicate topic should collapse: {memories!r}"
+    assert "prefers uv over pip strictly" in memories, "last line should win"
+
+
 def test_ingest_digest_is_idempotent(tmp_home):
     """Same digest ingested twice produces the same --memories output (no duplicates)."""
     _memcap(["--transcript", str(FIXTURE)])

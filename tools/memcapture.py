@@ -29,7 +29,7 @@ import sqlite3
 import subprocess
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path.home() / ".claude" / "memory.db"
@@ -60,6 +60,12 @@ FILE_TOOLS = {"Read", "Edit", "Write", "NotebookEdit"}
 BRANCH_RE = re.compile(r"(?:On branch|branch\s+)(\S+)")
 
 
+def _like_escape(s: str) -> str:
+    """Escape SQL LIKE wildcards (%, _) and the escape char itself.
+    Use with `LIKE ? ESCAPE '\\\\'` so `my_project` doesn't match `myXproject`."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class MemoryDB:
     """SQLite-backed session memory store with FTS5 search."""
 
@@ -71,7 +77,6 @@ class MemoryDB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self._create_tables()
-        self._widen_facts()
 
     def _create_tables(self) -> None:
         self.conn.executescript("""
@@ -95,7 +100,11 @@ class MemoryDB:
                 content TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
                 source_line INTEGER,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                subject TEXT,
+                predicate TEXT,
+                object TEXT,
+                confidence REAL
             );
 
             CREATE TABLE IF NOT EXISTS files_touched (
@@ -151,16 +160,6 @@ class MemoryDB:
 
         self.conn.commit()
 
-    def _widen_facts(self) -> None:
-        """Idempotent schema widen: add nullable typed columns for v2. v1 leaves them NULL."""
-        existing = {row[1] for row in self.conn.execute("PRAGMA table_info(facts)").fetchall()}
-        for col in ("subject", "predicate", "object"):
-            if col not in existing:
-                self.conn.execute(f"ALTER TABLE facts ADD COLUMN {col} TEXT")
-        if "confidence" not in existing:
-            self.conn.execute("ALTER TABLE facts ADD COLUMN confidence REAL")
-        self.conn.commit()
-
     def _content_hash(self, content: str) -> str:
         return hashlib.md5(content.encode()).hexdigest()[:12]
 
@@ -184,7 +183,7 @@ class MemoryDB:
                 session.topic,
                 session.message_count,
                 session.tool_count,
-                datetime.now().isoformat(),
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                 session.transcript_path,
             ),
         )
@@ -303,10 +302,10 @@ class MemoryDB:
             return "never"
         try:
             ts = timestamp.replace("T", " ").replace("Z", "").split(".")[0]
-            dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+            dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
         except (ValueError, TypeError):
             return "recently"
-        delta = datetime.now() - dt
+        delta = datetime.now(timezone.utc) - dt
         secs = delta.total_seconds()
         if secs < 60:
             return "just now"
@@ -330,8 +329,8 @@ class MemoryDB:
 
         if project:
             row = self.conn.execute(
-                "SELECT COUNT(*) as c, MAX(captured_at) as last FROM sessions WHERE project LIKE ?",
-                (f"%{project}%",),
+                "SELECT COUNT(*) as c, MAX(captured_at) as last FROM sessions WHERE project LIKE ? ESCAPE '\\'",
+                (f"%{_like_escape(project)}%",),
             ).fetchone()
         else:
             row = self.conn.execute("SELECT COUNT(*) as c, MAX(captured_at) as last FROM sessions").fetchone()
@@ -389,14 +388,14 @@ class MemoryDB:
                 SELECT m.topic, m.content, m.durability, m.last_accessed,
                        CASE
                          WHEN m.durability = 'durable' THEN 1
-                         WHEN s.project LIKE ? THEN 1
+                         WHEN s.project LIKE ? ESCAPE '\\' THEN 1
                          ELSE 0
                        END AS keep_priority
                 FROM memories m
                 LEFT JOIN sessions s ON m.source_session = s.session_id
                 ORDER BY keep_priority DESC, m.last_accessed DESC
                 """,
-                (f"%{project}%",),
+                (f"%{_like_escape(project)}%",),
             ).fetchall()
         else:
             rows = self.conn.execute(
@@ -495,9 +494,9 @@ class MemoryDB:
     def _fallback_inject(self, project: str | None = None) -> str:
         """Generate ~200 token context block for SessionStart injection (v1 fallback)."""
         if project:
-            where_s = "WHERE s.project LIKE ?"
-            where_sf = "WHERE s.project LIKE ? AND"
-            params: list = [f"{project}%"]
+            where_s = "WHERE s.project LIKE ? ESCAPE '\\'"
+            where_sf = "WHERE s.project LIKE ? ESCAPE '\\' AND"
+            params: list = [f"{_like_escape(project)}%"]
         else:
             where_s = ""
             where_sf = "WHERE"
@@ -817,47 +816,67 @@ def parse_digest_output(text: str, project: str | None = None) -> list[dict]:
     """Parse LLM digest output into memory dicts.
     Expected format per line: topic | durability | content
     Also captures trailing "HANDOFF: ..." paragraph as a per-project ephemeral memory.
+
+    Dedupes within a single batch by topic (last-writer-wins) to avoid spurious
+    write races when the LLM emits the same topic twice. Handoff content is
+    capped to HANDOFF_MAX_CHARS; a new `topic | durability | content` line after
+    HANDOFF: also terminates handoff mode (defensive — the LLM sometimes
+    hallucinates a second batch).
     """
-    memories = []
+    HANDOFF_MAX_CHARS = 2000
+    memories: dict[str, dict] = {}
     handoff_lines: list[str] = []
+    handoff_char_count = 0
     in_handoff = False
+
+    def _parse_fact_line(s: str) -> tuple[str, str, str] | None:
+        parts = [p.strip() for p in s.split("|", 2)]
+        if len(parts) != 3:
+            return None
+        t, d, c = parts
+        if d not in ("durable", "ephemeral") or not t or not c:
+            return None
+        t = re.sub(r"[^a-z0-9_]", "_", t.lower()).strip("_")
+        return (t, d, c) if t else None
+
     for raw in text.strip().splitlines():
-        line = raw.rstrip()
+        stripped = raw.strip()
         if in_handoff:
-            if line.strip():
-                handoff_lines.append(line.strip())
-            continue
-        stripped = line.strip()
+            if _parse_fact_line(stripped) is not None:
+                in_handoff = False
+                # fall through to parse this line as a fact
+            else:
+                if stripped and handoff_char_count < HANDOFF_MAX_CHARS:
+                    handoff_lines.append(stripped)
+                    handoff_char_count += len(stripped) + 1
+                continue
         if stripped.upper().startswith("HANDOFF:"):
             in_handoff = True
             rest = stripped[len("HANDOFF:") :].strip()
             if rest:
                 handoff_lines.append(rest)
+                handoff_char_count += len(rest) + 1
             continue
         if not stripped or stripped.startswith("#"):
             continue
-        parts = [p.strip() for p in stripped.split("|", 2)]
-        if len(parts) != 3:
+        parsed = _parse_fact_line(stripped)
+        if parsed is None:
             continue
-        topic, durability, content = parts
-        if durability not in ("durable", "ephemeral"):
-            continue
-        if not topic or not content:
-            continue
-        topic = re.sub(r"[^a-z0-9_]", "_", topic.lower().strip()).strip("_")
-        if topic:
-            memories.append({"topic": topic, "content": content, "durability": durability})
+        topic, durability, content = parsed
+        memories[topic] = {"topic": topic, "content": content, "durability": durability}
 
+    result = list(memories.values())
     if handoff_lines and project:
         handoff_topic = "handoff_" + re.sub(r"[^a-z0-9_]", "_", project.lower()).strip("_")
-        memories.append(
+        joined = " ".join(handoff_lines)[:HANDOFF_MAX_CHARS]
+        result.append(
             {
                 "topic": handoff_topic,
-                "content": " ".join(handoff_lines),
+                "content": joined,
                 "durability": "ephemeral",
             }
         )
-    return memories
+    return result
 
 
 def find_transcripts() -> list[tuple[Path, str]]:
@@ -906,7 +925,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="List learned memories (optional topic pattern)",
     )
     parser.add_argument("--forget", type=str, metavar="TOPIC", help="Delete a memory by topic")
-    parser.add_argument("--dashboard", action="store_true", help="Open visual dashboard in browser")
 
     # Hook-internal flags (hidden from --help but still functional)
     parser.add_argument("--all", action="store_true", help=argparse.SUPPRESS)
@@ -938,7 +956,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(args: argparse.Namespace, out: "TextIO | None" = None) -> int:
+def run(args: argparse.Namespace, out: "TextIO | None" = None, input_text: str | None = None) -> int:
     import contextlib
 
     db = MemoryDB()
@@ -950,11 +968,6 @@ def run(args: argparse.Namespace, out: "TextIO | None" = None) -> int:
 
     try:
         with stack:
-            if args.dashboard:
-                dashboard_tool = Path(__file__).parent / "memdashboard.py"
-                subprocess.run(["uv", "run", str(dashboard_tool)], check=False)
-                return
-
             if args.query:
                 results = db.search(args.query)
                 if not results:
@@ -1019,7 +1032,7 @@ def run(args: argparse.Namespace, out: "TextIO | None" = None) -> int:
                 return
 
             if args.ingest_digest:
-                text = sys.stdin.read()
+                text = input_text if input_text is not None else sys.stdin.read()
                 memories = parse_digest_output(text, project=args.project)
                 for m in memories:
                     db.upsert_memory(
@@ -1032,7 +1045,7 @@ def run(args: argparse.Namespace, out: "TextIO | None" = None) -> int:
                 return
 
             if args.ingest_snapshot:
-                text = sys.stdin.read().strip()
+                text = (input_text if input_text is not None else sys.stdin.read()).strip()
                 project = args.project or "unknown"
                 session_id = args.session_id
                 snapshot = text if text else None
@@ -1047,8 +1060,8 @@ def run(args: argparse.Namespace, out: "TextIO | None" = None) -> int:
                     ).fetchall()
                 else:
                     rows = db.conn.execute(
-                        "SELECT project, session_id, compacted_at, CASE WHEN snapshot IS NOT NULL THEN 'yes' ELSE 'no' END as has_snapshot FROM compactions WHERE project LIKE ? ORDER BY compacted_at DESC LIMIT 20",
-                        (f"%{args.compactions}%",),
+                        "SELECT project, session_id, compacted_at, CASE WHEN snapshot IS NOT NULL THEN 'yes' ELSE 'no' END as has_snapshot FROM compactions WHERE project LIKE ? ESCAPE '\\' ORDER BY compacted_at DESC LIMIT 20",
+                        (f"%{_like_escape(args.compactions)}%",),
                     ).fetchall()
                 if not rows:
                     print("No compactions recorded")

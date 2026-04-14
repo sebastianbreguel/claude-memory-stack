@@ -90,10 +90,7 @@ After consolidating individual memories, look for cross-memory themes:
 
 1. Read all memory files in the current project
 2. Identify recurring concepts (technologies, patterns, preferences that appear in 2+ files)
-3. If `~/.claude/compiled-knowledge/` exists, read `concepts.md` and update it
-4. If it doesn't exist, note the themes in your summary for potential future compilation
-
-Don't create the compiled-knowledge directory — that's memcompile.py's job. Just report what you see.
+3. Note recurring themes in your summary for future reference
 
 ---
 

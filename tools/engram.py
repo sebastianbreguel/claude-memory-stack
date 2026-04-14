@@ -28,8 +28,6 @@ TOOLS_DIR = Path(__file__).parent
 sys.path.insert(0, str(TOOLS_DIR))
 
 import memcapture  # noqa: E402
-import memcompile  # noqa: E402
-import memdashboard  # noqa: E402
 import mempatterns  # noqa: E402
 
 
@@ -40,7 +38,6 @@ def _memcap_ns(**overrides) -> argparse.Namespace:
         all=False,
         recent=None,
         query=None,
-        dashboard=False,
         stats=False,
         memories=None,
         forget=None,
@@ -74,29 +71,18 @@ def _patterns_ns(update: bool = False, status: bool = False, report: bool = Fals
     )
 
 
-def _print_compile_deprecation() -> None:
-    print(
-        "NOTE: `engram compile` / `compiled-knowledge/` is planned for deprecation in engram v2.\n"
-        "      v2 replaces the markdown artifact with an automatic cross-project `concepts`\n"
-        "      table in memory.db. Use `engram export-concepts` for the markdown bridge.",
-        file=sys.stderr,
-    )
+def _log_warning(msg: str) -> None:
+    """Append a timestamped line to ~/.claude/engram.log. Never raises."""
+    try:
+        from datetime import datetime, timezone
 
-
-def _compile(args: argparse.Namespace) -> int:
-    _print_compile_deprecation()
-    return memcompile.run(argparse.Namespace(lint_only=args.lint_only, dry_run=args.dry_run))
-
-
-def _export_concepts(args: argparse.Namespace) -> int:
-    _print_compile_deprecation()
-    rc = memcompile.run(argparse.Namespace(lint_only=False, dry_run=False))
-    out = Path(args.output) if args.output else Path.home() / ".claude" / "compiled-knowledge" / "concepts.md"
-    if out.exists():
-        print(f"Exported: {out}")
-        return rc
-    print(f"No concepts file produced at {out}", file=sys.stderr)
-    return 1
+        log = Path.home() / ".claude" / "engram.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with log.open("a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
 
 
 def _find_transcript(session_id: str) -> tuple[Path, str] | None:
@@ -110,11 +96,17 @@ def _find_transcript(session_id: str) -> tuple[Path, str] | None:
     return None
 
 
-def _extract_chunk(transcript: Path, pct: float = 0.2, max_chars: int = 6000) -> str:
-    lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
-    start = max(0, int(len(lines) * (1 - pct)))
+def _extract_chunk(transcript: Path, tail_lines: int = 800, max_chars: int = 6000) -> str:
+    """Extract the tail of a transcript without reading the whole file into memory."""
+    from collections import deque
+
+    tail: deque[str] = deque(maxlen=tail_lines)
+    with transcript.open(encoding="utf-8", errors="replace") as fh:
+        for raw in fh:
+            tail.append(raw)
+
     msgs: list[str] = []
-    for raw in lines[start:]:
+    for raw in tail:
         line = raw.strip()
         if not line:
             continue
@@ -178,6 +170,7 @@ def _run_haiku(prompt: str, chunk: str, timeout: int = 120) -> str:
         return ""
     claude_bin = shutil.which("claude")
     if not claude_bin:
+        _log_warning("claude CLI not found in PATH; skipping Haiku call")
         return ""
     try:
         result = subprocess.run(
@@ -187,19 +180,39 @@ def _run_haiku(prompt: str, chunk: str, timeout: int = 120) -> str:
             text=True,
             timeout=timeout,
         )
-        return result.stdout if result.returncode == 0 else ""
-    except Exception:
+        if result.returncode != 0:
+            _log_warning(f"claude exit {result.returncode}: {result.stderr[:200]}")
+            return ""
+        return result.stdout
+    except subprocess.TimeoutExpired:
+        _log_warning(f"claude timed out after {timeout}s")
+        return ""
+    except Exception as e:
+        _log_warning(f"claude subprocess error: {e}")
         return ""
 
 
 def _fire_and_forget(cmd: list[str]) -> None:
-    """Spawn a detached subprocess that survives the parent's exit."""
-    subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    """Spawn a detached subprocess. stderr goes to engram.log so failures are debuggable."""
+    log = Path.home() / ".claude" / "engram.log"
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        err = log.open("a", encoding="utf-8")
+    except Exception:
+        err = subprocess.DEVNULL
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=err,
+            start_new_session=True,
+        )
+    finally:
+        if err is not subprocess.DEVNULL:
+            try:
+                err.close()
+            except Exception:
+                pass
 
 
 def _on_precompact(_args: argparse.Namespace) -> int:
@@ -224,32 +237,22 @@ def _on_precompact(_args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"capture error: {e}", file=sys.stderr)
 
-    _fire_and_forget(
-        [
-            sys.executable,
-            str(Path(__file__)),
-            "_run-digest",
-            "--transcript",
-            str(transcript),
-            "--session-id",
-            session_id,
-            "--project",
-            project,
-        ]
-    )
-    _fire_and_forget(
-        [
-            sys.executable,
-            str(Path(__file__)),
-            "_run-snapshot",
-            "--transcript",
-            str(transcript),
-            "--session-id",
-            session_id,
-            "--project",
-            project,
-        ]
-    )
+    for mode in ("digest", "snapshot"):
+        _fire_and_forget(
+            [
+                sys.executable,
+                str(Path(__file__)),
+                "_run-llm",
+                "--mode",
+                mode,
+                "--transcript",
+                str(transcript),
+                "--session-id",
+                session_id,
+                "--project",
+                project,
+            ]
+        )
 
     import mempatterns
 
@@ -274,30 +277,28 @@ def _on_precompact(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_digest(args: argparse.Namespace) -> int:
-    chunk = _extract_chunk(Path(args.transcript), pct=0.2, max_chars=6000)
+_LLM_MODES = {
+    "digest": {"tail_lines": 800, "max_chars": 6000, "prompt": DIGEST_PROMPT, "ingest": "ingest_digest"},
+    "snapshot": {"tail_lines": 1500, "max_chars": 12000, "prompt": SNAPSHOT_PROMPT, "ingest": "ingest_snapshot"},
+}
+
+
+def _run_llm(args: argparse.Namespace) -> int:
+    cfg = _LLM_MODES.get(args.mode)
+    if cfg is None:
+        return 1
+    chunk = _extract_chunk(Path(args.transcript), tail_lines=cfg["tail_lines"], max_chars=cfg["max_chars"])
     if len(chunk) < 50:
         return 0
-    output = _run_haiku(DIGEST_PROMPT, chunk)
+    output = _run_haiku(cfg["prompt"], chunk)
     if not output:
         return 0
     import memcapture
 
-    sys.stdin = io.StringIO(output)
-    return memcapture.run(_memcap_ns(ingest_digest=True, session_id=args.session_id, project=args.project))
-
-
-def _run_snapshot(args: argparse.Namespace) -> int:
-    chunk = _extract_chunk(Path(args.transcript), pct=0.15, max_chars=12000)
-    if len(chunk) < 50:
-        return 0
-    output = _run_haiku(SNAPSHOT_PROMPT, chunk)
-    if not output:
-        return 0
-    import memcapture
-
-    sys.stdin = io.StringIO(output)
-    return memcapture.run(_memcap_ns(ingest_snapshot=True, session_id=args.session_id, project=args.project))
+    return memcapture.run(
+        _memcap_ns(**{cfg["ingest"]: True, "session_id": args.session_id, "project": args.project}),
+        input_text=output,
+    )
 
 
 def _on_session_start(_args: argparse.Namespace) -> int:
@@ -372,24 +373,6 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--report", action="store_true")
     pt.set_defaults(func=lambda a: mempatterns.run(_patterns_ns(update=a.update, status=a.status, report=a.report)))
 
-    dash = sub.add_parser("dashboard", help="visual dashboard")
-    dash.add_argument("--output", default=None)
-    dash.add_argument("--no-open", dest="no_open", action="store_true")
-    dash.set_defaults(
-        func=lambda a: memdashboard.run(
-            argparse.Namespace(output=a.output or str(Path.home() / ".claude" / "engram-dashboard.html"), no_open=a.no_open)
-        )
-    )
-
-    cm = sub.add_parser("compile", help="cross-project memory compile (manual, deprecated)")
-    cm.add_argument("--lint-only", dest="lint_only", action="store_true")
-    cm.add_argument("--dry-run", dest="dry_run", action="store_true")
-    cm.set_defaults(func=_compile)
-
-    ec = sub.add_parser("export-concepts", help="regenerate compiled-knowledge/concepts.md (migration bridge)")
-    ec.add_argument("--output", default=None)
-    ec.set_defaults(func=_export_concepts)
-
     st = sub.add_parser("stats", help="capture statistics")
     st.set_defaults(func=lambda _a: memcapture.run(_memcap_ns(stats=True)))
 
@@ -406,17 +389,12 @@ def build_parser() -> argparse.ArgumentParser:
     ss = sub.add_parser("on-session-start", help="hook: orchestrate SessionStart injection + banner")
     ss.set_defaults(func=_on_session_start)
 
-    rd = sub.add_parser("_run-digest", help="(internal) Haiku digest")
-    rd.add_argument("--transcript", required=True)
-    rd.add_argument("--session-id", dest="session_id", required=True)
-    rd.add_argument("--project", required=True)
-    rd.set_defaults(func=_run_digest)
-
-    rs = sub.add_parser("_run-snapshot", help="(internal) Haiku snapshot")
-    rs.add_argument("--transcript", required=True)
-    rs.add_argument("--session-id", dest="session_id", required=True)
-    rs.add_argument("--project", required=True)
-    rs.set_defaults(func=_run_snapshot)
+    rl = sub.add_parser("_run-llm", help="(internal) Haiku digest or snapshot")
+    rl.add_argument("--mode", choices=sorted(_LLM_MODES.keys()), required=True)
+    rl.add_argument("--transcript", required=True)
+    rl.add_argument("--session-id", dest="session_id", required=True)
+    rl.add_argument("--project", required=True)
+    rl.set_defaults(func=_run_llm)
 
     return p
 

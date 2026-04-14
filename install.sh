@@ -28,15 +28,11 @@ echo "[2/4] Installing files..."
 
 cp "$SCRIPT_DIR/tools/engram.py" "$CLAUDE_DIR/tools/engram.py"
 cp "$SCRIPT_DIR/tools/memcapture.py" "$CLAUDE_DIR/tools/memcapture.py"
-cp "$SCRIPT_DIR/tools/memcompile.py" "$CLAUDE_DIR/tools/memcompile.py"
 cp "$SCRIPT_DIR/tools/mempatterns.py" "$CLAUDE_DIR/tools/mempatterns.py"
-cp "$SCRIPT_DIR/tools/memdashboard.py" "$CLAUDE_DIR/tools/memdashboard.py"
 chmod +x "$CLAUDE_DIR/tools/engram.py"
 echo "  -> tools/engram.py (unified CLI + hook orchestrators)"
 echo "  -> tools/memcapture.py (SQLite session capture)"
-echo "  -> tools/memcompile.py (cross-project compiler)"
 echo "  -> tools/mempatterns.py (pattern detection + wiki)"
-echo "  -> tools/memdashboard.py (visual dashboard)"
 
 cp "$SCRIPT_DIR/skills/memclean/SKILL.md" "$CLAUDE_DIR/skills/memclean/SKILL.md"
 cp "$SCRIPT_DIR/skills/reflect/SKILL.md" "$CLAUDE_DIR/skills/reflect/SKILL.md"
@@ -73,16 +69,22 @@ def strip_legacy(entry_list):
 def ensure_hook(event_name, command):
     event = hooks.setdefault(event_name, [])
     event[:] = strip_legacy(event)
+    # Check ALL matchers for existing engram.py registration
+    already = any(
+        "engram.py" in h.get("command", "")
+        for entry in event
+        for h in entry.get("hooks", [])
+    )
+    if already:
+        print(f"  {event_name} hook already configured")
+        return
+    # Add to the catch-all (empty matcher) entry
     entry = next((e for e in event if e.get("matcher", "") == ""), None)
     if entry is None:
         entry = {"matcher": "", "hooks": []}
         event.append(entry)
-    hook_list = entry.setdefault("hooks", [])
-    if not any("engram.py" in h.get("command", "") for h in hook_list):
-        hook_list.append({"type": "command", "command": command})
-        print(f"  Added {event_name} hook: engram.py")
-    else:
-        print(f"  {event_name} hook already configured")
+    entry.setdefault("hooks", []).append({"type": "command", "command": command})
+    print(f"  Added {event_name} hook: engram.py")
 
 
 ensure_hook("PreCompact", "uv run $HOME/.claude/tools/engram.py on-precompact")
@@ -108,5 +110,4 @@ echo "Commands:"
 echo "  uv run ~/.claude/tools/engram.py memories     # list learned memories"
 echo "  uv run ~/.claude/tools/engram.py forget TOPIC # forget a memory"
 echo "  uv run ~/.claude/tools/engram.py stats        # capture stats"
-echo "  uv run ~/.claude/tools/engram.py dashboard    # visual dashboard"
 echo "  uv run ~/.claude/tools/engram.py patterns --report   # pattern wiki"
