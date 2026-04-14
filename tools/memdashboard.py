@@ -28,11 +28,7 @@ IGNORE_PATH = PATTERNS_DIR / ".ignore"
 def load_ignore_list() -> list[str]:
     if not IGNORE_PATH.exists():
         return []
-    return [
-        line.strip()
-        for line in IGNORE_PATH.read_text().splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
+    return [line.strip() for line in IGNORE_PATH.read_text().splitlines() if line.strip() and not line.startswith("#")]
 
 
 def is_ignored(project: str, ignore_list: list[str]) -> bool:
@@ -45,9 +41,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-def _ignore_where(
-    ignore_list: list[str], project_col: str = "project", prefix: str = "WHERE"
-) -> tuple[str, list[str]]:
+def _ignore_where(ignore_list: list[str], project_col: str = "project", prefix: str = "WHERE") -> tuple[str, list[str]]:
     """Build SQL WHERE clause to exclude ignored projects."""
     if not ignore_list:
         return "", []
@@ -56,9 +50,7 @@ def _ignore_where(
     return f" {prefix} " + " AND ".join(clauses), params
 
 
-def _ignore_where_and(
-    ignore_list: list[str], project_col: str = "project"
-) -> tuple[str, list[str]]:
+def _ignore_where_and(ignore_list: list[str], project_col: str = "project") -> tuple[str, list[str]]:
     """Build SQL AND clause to exclude ignored projects (for appending to existing WHERE)."""
     if not ignore_list:
         return "", []
@@ -92,9 +84,7 @@ def query_activity_data(conn: sqlite3.Connection, ignore_list: list[str]) -> lis
     result = []
     for d, c in sorted(day_counts.items()):
         top = day_projects[d].most_common(3)
-        result.append(
-            {"day": d, "count": c, "top": [{"name": n, "count": k} for n, k in top]}
-        )
+        result.append({"day": d, "count": c, "top": [{"name": n, "count": k} for n, k in top]})
     return result
 
 
@@ -181,9 +171,7 @@ def query_top_files(conn: sqlite3.Connection, ignore_list: list[str]) -> list[di
         full = r["path"]
         short = full.split("/")[-1] if "/" in full else full
         parent = "/".join(full.split("/")[-3:-1]) if full.count("/") >= 3 else ""
-        results.append(
-            {"file": short, "parent": parent, "full": full, "count": r["total"]}
-        )
+        results.append({"file": short, "parent": parent, "full": full, "count": r["total"]})
     return results
 
 
@@ -248,15 +236,11 @@ def query_patterns(conn: sqlite3.Connection) -> list[dict]:
                 ptype = line.split(":", 1)[1].strip()
             if line.startswith("strength:"):
                 strength = line.split(":", 1)[1].strip()
-        results.append(
-            {"name": name, "type": ptype, "strength": strength, "file": md.name}
-        )
+        results.append({"name": name, "type": ptype, "strength": strength, "file": md.name})
     return results
 
 
-def query_project_profiles(
-    conn: sqlite3.Connection, ignore_list: list[str]
-) -> list[dict]:
+def query_project_profiles(conn: sqlite3.Connection, ignore_list: list[str]) -> list[dict]:
     """Build a narrative profile for each active project."""
     where, params = _ignore_where(ignore_list)
     projects = conn.execute(
@@ -277,9 +261,7 @@ def query_project_profiles(
 
         # Handoff memory
         handoff_topic = "handoff_" + slug.lower().replace("-", "_").strip("_")
-        handoff = conn.execute(
-            "SELECT content FROM memories WHERE topic = ?", (handoff_topic,)
-        ).fetchone()
+        handoff = conn.execute("SELECT content FROM memories WHERE topic = ?", (handoff_topic,)).fetchone()
 
         # Related memories (ephemeral from this project)
         related_mems = conn.execute(
@@ -431,9 +413,7 @@ def _synthesize_about_text(
         elif len(langs) == 2:
             fragments.append(f"{langs[0]} and {langs[1]} developer")
         else:
-            fragments.append(
-                f"{'/'.join(langs[:2])} developer (also touches {', '.join(langs[2:4])})"
-            )
+            fragments.append(f"{'/'.join(langs[:2])} developer (also touches {', '.join(langs[2:4])})")
 
     # Extract preference signals from memory content
     pref_signals: list[str] = []
@@ -506,10 +486,7 @@ def query_developer_profile(
         # Heuristic: per-project handoffs are project knowledge, not profile
         if topic.startswith("handoff_") or topic.startswith("bc_"):
             project_knowledge += 1
-        elif any(
-            kw in content.lower()
-            for kw in ("uses ", "prefers ", "never ", "always ", "wants ", "refuses ")
-        ):
+        elif any(kw in content.lower() for kw in ("uses ", "prefers ", "never ", "always ", "wants ", "refuses ")):
             preferences.append({"topic": topic, "content": content})
         else:
             practices.append({"topic": topic, "content": content})
@@ -558,26 +535,14 @@ def query_developer_profile(
 
     # ── Aggregate stats for the profile summary ──
     where_sess, params_sess = _ignore_where(ignore_list)
-    total_sessions = conn.execute(
-        f"SELECT COUNT(*) as c FROM sessions{where_sess}", params_sess
-    ).fetchone()["c"]
-    unique_projects = conn.execute(
-        f"SELECT COUNT(DISTINCT project) as c FROM sessions{where_sess}", params_sess
-    ).fetchone()["c"]
+    total_sessions = conn.execute(f"SELECT COUNT(*) as c FROM sessions{where_sess}", params_sess).fetchone()["c"]
+    unique_projects = conn.execute(f"SELECT COUNT(DISTINCT project) as c FROM sessions{where_sess}", params_sess).fetchone()["c"]
 
     # Date range (first to last session)
-    first_row = conn.execute(
-        f"SELECT MIN(captured_at) as first_date FROM sessions{where_sess}", params_sess
-    ).fetchone()
-    last_row = conn.execute(
-        f"SELECT MAX(captured_at) as last_date FROM sessions{where_sess}", params_sess
-    ).fetchone()
-    first_session = (
-        first_row["first_date"][:10] if first_row and first_row["first_date"] else None
-    )
-    last_session = (
-        last_row["last_date"][:10] if last_row and last_row["last_date"] else None
-    )
+    first_row = conn.execute(f"SELECT MIN(captured_at) as first_date FROM sessions{where_sess}", params_sess).fetchone()
+    last_row = conn.execute(f"SELECT MAX(captured_at) as last_date FROM sessions{where_sess}", params_sess).fetchone()
+    first_session = first_row["first_date"][:10] if first_row and first_row["first_date"] else None
+    last_session = last_row["last_date"][:10] if last_row and last_row["last_date"] else None
 
     # Durable memories count
     durable_count = sum(1 for m in memories if m["durability"] == "durable")
@@ -586,9 +551,7 @@ def query_developer_profile(
     top_projects = [p["project"] for p in projects[:5]]
 
     # Synthesize about text
-    about = _synthesize_about_text(
-        preferences, practices, langs, top_tools, total_sessions
-    )
+    about = _synthesize_about_text(preferences, practices, langs, top_tools, total_sessions)
 
     return {
         "preferences": preferences[:8],
@@ -615,12 +578,8 @@ def query_developer_profile(
 def query_stats(conn: sqlite3.Connection, ignore_list: list[str]) -> dict:
     """General stats."""
     where, params = _ignore_where(ignore_list)
-    sessions = conn.execute(
-        f"SELECT COUNT(*) as c FROM sessions{where}", params
-    ).fetchone()["c"]
-    projects = conn.execute(
-        f"SELECT COUNT(DISTINCT project) as c FROM sessions{where}", params
-    ).fetchone()["c"]
+    sessions = conn.execute(f"SELECT COUNT(*) as c FROM sessions{where}", params).fetchone()["c"]
+    projects = conn.execute(f"SELECT COUNT(DISTINCT project) as c FROM sessions{where}", params).fetchone()["c"]
     where_ft, params_ft = _ignore_where(ignore_list, "s.project")
     files = conn.execute(
         f"SELECT COUNT(DISTINCT ft.path) as c FROM files_touched ft JOIN sessions s ON ft.session_id = s.session_id{where_ft}",
@@ -657,12 +616,7 @@ PROJECT_COLORS = [
 
 
 def _html_escape(s: str) -> str:
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def _build_memories_html(memories: list[dict]) -> str:
@@ -688,11 +642,7 @@ def _build_profiles_html(profiles: list[dict]) -> str:
     html = ""
     for i, p in enumerate(profiles):
         color = PROJECT_COLORS[i % len(PROJECT_COLORS)]
-        tech = (
-            " ".join(f'<span class="tech-pill">{ext}</span>' for ext in p["tech_stack"])
-            if p["tech_stack"]
-            else ""
-        )
+        tech = " ".join(f'<span class="tech-pill">{ext}</span>' for ext in p["tech_stack"]) if p["tech_stack"] else ""
 
         about_html = ""
         if p.get("about"):
@@ -706,11 +656,7 @@ def _build_profiles_html(profiles: list[dict]) -> str:
         if p["topics"]:
             topics_html = '<div class="profile-section"><div class="section-label">Recent Sessions</div>'
             for t in p["topics"]:
-                branch = (
-                    f'<span class="branch-tag">{_html_escape(t["branch"])}</span>'
-                    if t["branch"]
-                    else ""
-                )
+                branch = f'<span class="branch-tag">{_html_escape(t["branch"])}</span>' if t["branch"] else ""
                 topics_html += f'<div class="topic-row"><span class="topic-date">{t["date"]}</span>{branch}<span class="topic-text">{_html_escape((t["topic"] or "")[:75])}</span></div>'
             topics_html += "</div>"
 
@@ -718,9 +664,7 @@ def _build_profiles_html(profiles: list[dict]) -> str:
         if p["top_files"]:
             files_html = '<div class="profile-section"><div class="section-label">Most Touched</div>'
             for f in p["top_files"][:6]:
-                pct = min(
-                    100, int(f["count"] / max(1, p["top_files"][0]["count"]) * 100)
-                )
+                pct = min(100, int(f["count"] / max(1, p["top_files"][0]["count"]) * 100))
                 files_html += f'<div class="file-bar-row"><span class="file-name">{_html_escape(f["file"])}</span><div class="file-bar-track"><div class="file-bar-fill" style="width:{pct}%;background:{color}40;border-left:2px solid {color}"></div></div><span class="file-count">{f["count"]}</span></div>'
             files_html += "</div>"
 
@@ -761,9 +705,7 @@ def _build_developer_profile_html(dp: dict) -> str:
     peak_sessions = peak["count"] if peak else 0
     peak_day_str = peak["day"] if peak else "-"
 
-    date_range = (
-        f"{first_session} to {last_session}" if first_session and last_session else "-"
-    )
+    date_range = f"{first_session} to {last_session}" if first_session and last_session else "-"
 
     tiles = [
         (total_sessions, "total sessions"),
@@ -810,17 +752,13 @@ def _build_developer_profile_html(dp: dict) -> str:
     for p in dp["preferences"]:
         prefs_html += f'<div class="dp-pref-row"><span class="dp-pref-topic">{_html_escape(p["topic"])}</span><span class="dp-pref-content">{_html_escape(p["content"][:110])}</span></div>'
     if not prefs_html:
-        prefs_html = (
-            '<div class="dp-empty">Preferences will appear as they are learned</div>'
-        )
+        prefs_html = '<div class="dp-empty">Preferences will appear as they are learned</div>'
 
     practices_html = ""
     for p in dp["practices"]:
         practices_html += f'<div class="dp-pref-row"><span class="dp-pref-topic">{_html_escape(p["topic"])}</span><span class="dp-pref-content">{_html_escape(p["content"][:110])}</span></div>'
     if not practices_html:
-        practices_html = (
-            '<div class="dp-empty">Practices will appear as they are learned</div>'
-        )
+        practices_html = '<div class="dp-empty">Practices will appear as they are learned</div>'
 
     return f"""<div class="dp-card">
 {about_html}
@@ -881,9 +819,7 @@ def _build_html(
     activity_map = {a["day"]: a["count"] for a in activity}
     today = date.today()
     # Start from the Sunday 52 weeks ago
-    start = today - timedelta(
-        days=today.weekday() + 1 + 52 * 7
-    )  # previous Sunday, 52 weeks back
+    start = today - timedelta(days=today.weekday() + 1 + 52 * 7)  # previous Sunday, 52 weeks back
     if start.weekday() != 6:
         start -= timedelta(days=(start.weekday() + 1) % 7)
 
@@ -905,9 +841,7 @@ def _build_html(
 
     # Build weeks grid
     day_names = ["", "Mon", "", "Wed", "", "Fri", ""]
-    heatmap_labels_html = "".join(
-        f'<div class="heatmap-label">{d}</div>' for d in day_names
-    )
+    heatmap_labels_html = "".join(f'<div class="heatmap-label">{d}</div>' for d in day_names)
 
     weeks_html = ""
     month_markers = []
@@ -940,9 +874,7 @@ def _build_html(
             months_html += f'<div class="heatmap-month" style="position:absolute;left:{offset_px}px">{mname}</div>'
             prev_end = offset_px + 24
 
-    total_sessions_year = sum(
-        a["count"] for a in activity if a["day"] >= start.isoformat()
-    )
+    total_sessions_year = sum(a["count"] for a in activity if a["day"] >= start.isoformat())
     heatmap_html = f"""<div class="heatmap-wrap">
 <div style="position:relative;height:18px;margin-left:28px;margin-bottom:6px">{months_html}</div>
 <div style="display:flex">
@@ -977,9 +909,7 @@ def _build_html(
         for c in coedits[:12]:
             coedits_html += f'<div class="coedit-row"><span class="coedit-file">{_html_escape(c["file_a"])}</span><span class="coedit-arrow">&harr;</span><span class="coedit-file">{_html_escape(c["file_b"])}</span><span class="coedit-count">{c["sessions"]}x</span></div>'
     else:
-        coedits_html = (
-            '<div class="empty-state">Detected after 3+ shared edit sessions</div>'
-        )
+        coedits_html = '<div class="empty-state">Detected after 3+ shared edit sessions</div>'
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1619,9 +1549,7 @@ def generate_html(output_path: Path) -> None:
     errors = query_errors(conn, ignore_list)
     patterns = query_patterns(conn)
     profiles = query_project_profiles(conn, ignore_list)
-    developer_profile = query_developer_profile(
-        conn, ignore_list, memories, activity, tools, projects
-    )
+    developer_profile = query_developer_profile(conn, ignore_list, memories, activity, tools, projects)
 
     conn.close()
 
@@ -1643,10 +1571,8 @@ def generate_html(output_path: Path) -> None:
     print(f"Dashboard generated: {output_path}")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="engram dashboard — visualize your session data"
-    )
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="engram dashboard — visualize your session data")
     parser.add_argument(
         "--output",
         "-o",
@@ -1659,19 +1585,26 @@ def main() -> None:
         action="store_true",
         help="Generate without opening in browser",
     )
-    args = parser.parse_args()
+    return parser
 
+
+def run(args: argparse.Namespace) -> int:
     if not DB_PATH.exists():
         print(f"No database found at {DB_PATH}")
         print("Run a few Claude Code sessions first, then try again.")
-        raise SystemExit(1)
+        return 1
 
     output = Path(args.output)
     generate_html(output)
 
     if not args.no_open:
         webbrowser.open(f"file://{output}")
+    return 0
+
+
+def main() -> int:
+    return run(build_parser().parse_args())
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

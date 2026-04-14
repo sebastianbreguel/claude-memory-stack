@@ -98,9 +98,7 @@ class WikiWriter:
                 all_errors.append(e)
 
         # Build page
-        co_edit_lines = "\n".join(
-            f"- [[{s}]] — {c} sessions" for s, c in existing_co_edits.items()
-        )
+        co_edit_lines = "\n".join(f"- [[{s}]] — {c} sessions" for s, c in existing_co_edits.items())
         error_lines = "\n".join(f"- {e}" for e in all_errors)
 
         content = f"""---
@@ -185,12 +183,8 @@ status: active
 
     def write_index(self) -> None:
         """Write index.md with wikilinks to all entities and patterns."""
-        entity_links = "\n".join(
-            f"- [[{p.stem}]]" for p in sorted((self.wiki_dir / "entities").glob("*.md"))
-        )
-        pattern_links = "\n".join(
-            f"- [[{p.stem}]]" for p in sorted((self.wiki_dir / "patterns").glob("*.md"))
-        )
+        entity_links = "\n".join(f"- [[{p.stem}]]" for p in sorted((self.wiki_dir / "entities").glob("*.md")))
+        pattern_links = "\n".join(f"- [[{p.stem}]]" for p in sorted((self.wiki_dir / "patterns").glob("*.md")))
         content = f"""# Patterns Wiki Index
 
 ## Entities
@@ -240,9 +234,7 @@ class PatternDetector:
             for row in rows
         ]
 
-    def detect_error_recurrence(
-        self, threshold: int = ERROR_RECURRENCE_THRESHOLD
-    ) -> list[dict]:
+    def detect_error_recurrence(self, threshold: int = ERROR_RECURRENCE_THRESHOLD) -> list[dict]:
         """Find errors appearing across multiple sessions."""
         sql = """
             SELECT content, content_hash, COUNT(*) AS cnt
@@ -262,9 +254,7 @@ class PatternDetector:
             for row in rows
         ]
 
-    def detect_project_streaks(
-        self, threshold: int = PROJECT_STREAK_THRESHOLD
-    ) -> list[dict]:
+    def detect_project_streaks(self, threshold: int = PROJECT_STREAK_THRESHOLD) -> list[dict]:
         """Find consecutive days of activity per project."""
         sql = """
             SELECT project, DATE(captured_at) AS day
@@ -292,9 +282,7 @@ class PatternDetector:
                 else:
                     current_streak = 1
             if max_streak >= threshold:
-                results.append(
-                    {"project": project, "streak": max_streak, "kind": "project_streak"}
-                )
+                results.append({"project": project, "streak": max_streak, "kind": "project_streak"})
         return results
 
     def detect_tool_anomalies(self, factor: float = TOOL_ANOMALY_FACTOR) -> list[dict]:
@@ -357,11 +345,7 @@ class PatternsOrchestrator:
         """Load project substrings to ignore from .ignore file (one per line)."""
         if not self.ignore_path.exists():
             return []
-        return [
-            line.strip()
-            for line in self.ignore_path.read_text().splitlines()
-            if line.strip() and not line.startswith("#")
-        ]
+        return [line.strip() for line in self.ignore_path.read_text().splitlines() if line.strip() and not line.startswith("#")]
 
     def _is_ignored(self, pattern: dict) -> bool:
         """Return True if pattern matches any ignored project substring."""
@@ -403,12 +387,7 @@ class PatternsOrchestrator:
         if kind == "project_streak":
             return "streak-" + _slugify(pattern["project"])
         if kind == "tool_anomaly":
-            return (
-                "tool-anomaly-"
-                + _slugify(pattern["project"])
-                + "-"
-                + _slugify(pattern["tool"])
-            )
+            return "tool-anomaly-" + _slugify(pattern["project"]) + "-" + _slugify(pattern["tool"])
         return _slugify(str(pattern))
 
     def _pattern_description(self, pattern: dict) -> str:
@@ -476,14 +455,8 @@ class PatternsOrchestrator:
             # Write entity pages for co-edits
             if pattern["kind"] == "co_edit":
                 for f in pattern["files"]:
-                    partners = [
-                        (other, pattern["count"])
-                        for other in pattern["files"]
-                        if other != f
-                    ]
-                    self.writer.write_entity_page(
-                        f, sessions=pattern["count"], co_edits=partners, errors=[]
-                    )
+                    partners = [(other, pattern["count"]) for other in pattern["files"] if other != f]
+                    self.writer.write_entity_page(f, sessions=pattern["count"], co_edits=partners, errors=[])
 
         self._prune_stale()
         self._write_suggestions()
@@ -529,18 +502,14 @@ class PatternsOrchestrator:
                 thresh = int(thresh_m.group(1))
                 if conf > thresh * SUGGESTION_FACTOR:
                     kind = kind_m.group(1) if kind_m else "unknown"
-                    high_confidence.append(
-                        {"name": pf.stem, "confidence": conf, "kind": kind}
-                    )
+                    high_confidence.append({"name": pf.stem, "confidence": conf, "kind": kind})
 
         if not high_confidence:
             return
 
         lines = ["# Suggested Actions\n", f"Generated: {date.today()}\n\n"]
         for p in sorted(high_confidence, key=lambda x: -x["confidence"]):
-            lines.append(
-                f"- **{p['name']}** ({p['kind']}) — confidence {p['confidence']}\n"
-            )
+            lines.append(f"- **{p['name']}** ({p['kind']}) — confidence {p['confidence']}\n")
 
         pending = self.wiki_dir / "suggestions" / "pending.md"
         pending.write_text("".join(lines))
@@ -587,10 +556,8 @@ class PatternsOrchestrator:
         )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="mempatterns — detect patterns from memory.db"
-    )
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="mempatterns — detect patterns from memory.db")
     parser.add_argument("--update", action="store_true")
     parser.add_argument("--report", action="store_true")
     parser.add_argument("--suggest", action="store_true")
@@ -598,11 +565,11 @@ def main() -> None:
     parser.add_argument("--forget", type=str, metavar="NAME")
     parser.add_argument("--rebuild", action="store_true")
     parser.add_argument("--db-path", type=Path, default=DB_PATH, help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--wiki-dir", type=Path, default=WIKI_DIR, help=argparse.SUPPRESS
-    )
-    args = parser.parse_args()
+    parser.add_argument("--wiki-dir", type=Path, default=WIKI_DIR, help=argparse.SUPPRESS)
+    return parser
 
+
+def run(args: argparse.Namespace) -> int:
     orch = PatternsOrchestrator(db_path=args.db_path, wiki_dir=args.wiki_dir)
 
     if args.update or args.rebuild:
@@ -630,6 +597,12 @@ def main() -> None:
         found = orch.forget(args.forget)
         print(f"Deleted: {args.forget}" if found else f"Not found: {args.forget}")
 
+    return 0
+
+
+def main() -> int:
+    return run(build_parser().parse_args())
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

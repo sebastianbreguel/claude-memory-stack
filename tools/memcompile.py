@@ -79,9 +79,7 @@ def lint_memories(memories: list[dict[str, str]]) -> str:
             try:
                 vdate = datetime.strptime(verified, "%Y-%m-%d")
                 if vdate < cutoff:
-                    stale.append(
-                        f"- `{m['_path']}` — verified {verified} ({STALE_DAYS}+ days ago)"
-                    )
+                    stale.append(f"- `{m['_path']}` — verified {verified} ({STALE_DAYS}+ days ago)")
             except ValueError:
                 stale.append(f"- `{m['_path']}` — invalid verified date: {verified}")
 
@@ -109,19 +107,13 @@ def lint_memories(memories: list[dict[str, str]]) -> str:
     lines.append("")
 
     # Check 4: Large memories (body > 2000 chars)
-    large = [
-        f"- `{m['_path']}` ({len(m.get('body', '')):,} chars)"
-        for m in memories
-        if len(m.get("body", "")) > 2000
-    ]
+    large = [f"- `{m['_path']}` ({len(m.get('body', '')):,} chars)" for m in memories if len(m.get("body", "")) > 2000]
     lines.append(f"## Oversized Memories ({len(large)})")
     lines.extend(large if large else ["- None"])
     lines.append("")
 
     # Check 5: Empty memories
-    empty = [
-        f"- `{m['_path']}`" for m in memories if len(m.get("body", "").strip()) < 10
-    ]
+    empty = [f"- `{m['_path']}`" for m in memories if len(m.get("body", "").strip()) < 10]
     lines.append(f"## Empty/Near-Empty ({len(empty)})")
     lines.extend(empty if empty else ["- None"])
     lines.append("")
@@ -133,15 +125,9 @@ def lint_memories(memories: list[dict[str, str]]) -> str:
         t = m.get("type", "unknown")
         by_type[t] = by_type.get(t, 0) + 1
     lines.append("## Summary")
-    lines.append(
-        f"- **{len(memories)}** memory files across **{projects_with_mem}** projects"
-    )
-    lines.append(
-        f"- By type: {', '.join(f'{t}: {c}' for t, c in sorted(by_type.items()))}"
-    )
-    lines.append(
-        f"- Stale: {len(stale)} | No type: {len(no_type)} | Dupes: {len(dupes)} | Large: {len(large)} | Empty: {len(empty)}"
-    )
+    lines.append(f"- **{len(memories)}** memory files across **{projects_with_mem}** projects")
+    lines.append(f"- By type: {', '.join(f'{t}: {c}' for t, c in sorted(by_type.items()))}")
+    lines.append(f"- Stale: {len(stale)} | No type: {len(no_type)} | Dupes: {len(dupes)} | Large: {len(large)} | Empty: {len(empty)}")
 
     return "\n".join(lines)
 
@@ -153,9 +139,7 @@ def compile_concepts(memories: list[dict[str, str]]) -> str:
 
     claude_path = shutil.which("claude")
     if not claude_path:
-        return (
-            "# Compilation skipped\n`claude` CLI not found. Install Claude Code first."
-        )
+        return "# Compilation skipped\n`claude` CLI not found. Install Claude Code first."
 
     memory_text = "\n\n---\n\n".join(
         f"**Project:** {m.get('_project', '?')} | **Type:** {m.get('type', '?')} | **Name:** {m.get('name', '?')}\n{m.get('body', '')}"
@@ -184,27 +168,21 @@ def compile_concepts(memories: list[dict[str, str]]) -> str:
     return f"# Compiled Knowledge\n**Generated:** {datetime.now():%Y-%m-%d %H:%M}\n\n{result.stdout}"
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Cross-project memory compiler")
-    parser.add_argument(
-        "--lint-only", action="store_true", help="Only run health checks"
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Show what would be compiled"
-    )
-    args = parser.parse_args()
+    parser.add_argument("--lint-only", action="store_true", help="Only run health checks")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be compiled")
+    return parser
 
+
+def run(args: argparse.Namespace) -> int:
     memories = collect_memories()
-    print(
-        f"Found {len(memories)} memory files across {len({m['_project'] for m in memories})} projects"
-    )
+    print(f"Found {len(memories)} memory files across {len({m['_project'] for m in memories})} projects")
 
     if args.dry_run:
         for m in memories:
-            print(
-                f"  {m.get('_project', '?'):40s} {m.get('type', '?'):12s} {m.get('name', '?')}"
-            )
-        return
+            print(f"  {m.get('_project', '?'):40s} {m.get('type', '?'):12s} {m.get('name', '?')}")
+        return 0
 
     # Always run lint
     health = lint_memories(memories)
@@ -214,11 +192,11 @@ def main() -> None:
 
     if args.lint_only:
         print(health)
-        return
+        return 0
 
     if len(memories) < 3:
         print("Too few memories for meaningful compilation. Run --lint-only instead.")
-        return
+        return 0
 
     # Compile concepts via claude CLI (no API key needed)
     print("Compiling concepts via claude CLI...")
@@ -226,7 +204,12 @@ def main() -> None:
     (OUTPUT_DIR / "concepts.md").write_text(compiled, encoding="utf-8")
     print(f"Concepts → {OUTPUT_DIR / 'concepts.md'}")
     print("Done.")
+    return 0
+
+
+def main() -> int:
+    return run(build_parser().parse_args())
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

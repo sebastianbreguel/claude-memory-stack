@@ -890,7 +890,7 @@ def find_current_session() -> tuple[Path, str] | None:
     return None
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="engram — persistent memory for Claude Code",
         epilog="Advanced/internal flags (used by hooks) are hidden. See docs/cli-reference.md.",
@@ -935,8 +935,10 @@ def main() -> None:
         metavar="PROJECT",
         help=argparse.SUPPRESS,
     )
-    args = parser.parse_args()
+    return parser
 
+
+def run(args: argparse.Namespace) -> int:
     db = MemoryDB()
     transcript_parser = TranscriptParser()
 
@@ -1115,6 +1117,12 @@ def main() -> None:
     finally:
         db.close()
 
+    return 0
+
+
+def main() -> int:
+    return run(build_parser().parse_args()) or 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
