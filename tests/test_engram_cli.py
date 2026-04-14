@@ -35,6 +35,7 @@ def test_help_lists_all_subcommands():
         "forget",
         "on-precompact",
         "on-session-start",
+        "on-user-prompt",
     ]:
         assert cmd in result.stdout, f"missing subcommand in help: {cmd}"
 
@@ -86,7 +87,7 @@ def test_on_precompact_captures_session(tmp_path, monkeypatch):
 def test_hooks_json_uses_engram_inline():
     """After Task 8, hooks.json references engram.py, not .sh."""
     config = _json.loads((REPO / "hooks" / "hooks.json").read_text())
-    for event in ("PreCompact", "SessionStart"):
+    for event in ("PreCompact", "SessionStart", "UserPromptSubmit"):
         for entry in config.get("hooks", {}).get(event, []):
             for h in entry.get("hooks", []):
                 cmd = h.get("command", "")

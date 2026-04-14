@@ -216,6 +216,34 @@ def _fire_and_forget(cmd: list[str]) -> None:
                 pass
 
 
+_COUNTER_FILE = Path.home() / ".claude" / ".engram-prompt-count"
+_DIGEST_EVERY = int(os.environ.get("ENGRAM_DIGEST_EVERY", "25"))
+
+
+def _read_counter() -> tuple[str, int]:
+    """Read (session_id, count) from counter file. Returns ('', 0) if missing/corrupt."""
+    try:
+        text = _COUNTER_FILE.read_text().strip()
+        sid, n = text.rsplit(":", 1)
+        return sid, int(n)
+    except Exception:
+        return "", 0
+
+
+def _write_counter(session_id: str, count: int) -> None:
+    try:
+        _COUNTER_FILE.write_text(f"{session_id}:{count}")
+    except Exception:
+        pass
+
+
+def _reset_counter() -> None:
+    try:
+        _COUNTER_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def _on_precompact(_args: argparse.Namespace) -> int:
     raw = sys.stdin.read() if not sys.stdin.isatty() else ""
     try:
@@ -275,6 +303,56 @@ def _on_precompact(_args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"patterns error: {e}", file=sys.stderr)
 
+    _reset_counter()
+    return 0
+
+
+def _on_user_prompt(_args: argparse.Namespace) -> int:
+    """UserPromptSubmit hook: count turns, trigger mid-session digest every N prompts."""
+    raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+    try:
+        payload = _json.loads(raw) if raw else {}
+    except Exception:
+        payload = {}
+    session_id = payload.get("session_id") or ""
+    if not session_id:
+        print(_json.dumps({"continue": True}))
+        return 0
+
+    prev_sid, count = _read_counter()
+    if prev_sid != session_id:
+        count = 0
+    count += 1
+    _write_counter(session_id, count)
+
+    if count >= _DIGEST_EVERY:
+        found = _find_transcript(session_id)
+        if found is not None:
+            transcript, project = found
+            import memcapture
+
+            try:
+                memcapture.run(_memcap_ns(transcript=str(transcript)))
+            except Exception:
+                pass
+            _fire_and_forget(
+                [
+                    sys.executable,
+                    str(Path(__file__)),
+                    "_run-llm",
+                    "--mode",
+                    "digest",
+                    "--transcript",
+                    str(transcript),
+                    "--session-id",
+                    session_id,
+                    "--project",
+                    project,
+                ]
+            )
+        _write_counter(session_id, 0)
+
+    print(_json.dumps({"continue": True}))
     return 0
 
 
@@ -389,6 +467,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     ss = sub.add_parser("on-session-start", help="hook: orchestrate SessionStart injection + banner")
     ss.set_defaults(func=_on_session_start)
+
+    up = sub.add_parser("on-user-prompt", help="hook: mid-session digest every N prompts")
+    up.set_defaults(func=_on_user_prompt)
 
     rl = sub.add_parser("_run-llm", help="(internal) Haiku digest or snapshot")
     rl.add_argument("--mode", choices=sorted(_LLM_MODES.keys()), required=True)

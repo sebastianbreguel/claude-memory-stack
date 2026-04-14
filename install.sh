@@ -89,6 +89,7 @@ def ensure_hook(event_name, command):
 
 ensure_hook("PreCompact", "uv run $HOME/.claude/tools/engram.py on-precompact")
 ensure_hook("SessionStart", "uv run $HOME/.claude/tools/engram.py on-session-start")
+ensure_hook("UserPromptSubmit", "uv run $HOME/.claude/tools/engram.py on-user-prompt")
 
 settings_path.write_text(json.dumps(settings, indent=2) + "\n")
 PYEOF
