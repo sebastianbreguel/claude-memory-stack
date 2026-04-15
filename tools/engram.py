@@ -451,8 +451,7 @@ def _on_precompact(_args: argparse.Namespace) -> int:
                 str(transcript),
                 "--session-id",
                 session_id,
-                "--project",
-                project,
+                f"--project={project}",
             ]
         )
 
@@ -483,10 +482,8 @@ def _on_precompact(_args: argparse.Namespace) -> int:
                 sys.executable,
                 str(Path(__file__)),
                 "_executive",
-                "--cwd",
-                cwd,
-                "--project-key",
-                cwd.replace("/", "-"),
+                f"--cwd={cwd}",
+                f"--project-key={cwd.replace('/', '-')}",
             ]
         )
 
@@ -533,8 +530,7 @@ def _on_user_prompt(_args: argparse.Namespace) -> int:
                     str(transcript),
                     "--session-id",
                     session_id,
-                    "--project",
-                    project,
+                    f"--project={project}",
                 ]
             )
             cwd = payload.get("cwd") or _cwd_from_transcript(transcript)
