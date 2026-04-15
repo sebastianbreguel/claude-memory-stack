@@ -2,7 +2,18 @@
 
 ## Unreleased
 
+### Added
+- **Executive summary** at SessionStart: Sonnet merges Claude Code's `※ recap` (`away_summary`) with engram's inject_context into a single `next: <step>` line, cached per-project at `~/.claude/engram/executive/<cwd-slug>.md`. Read on SessionStart with zero latency; rebuilt in background on PreCompact and every 25 prompts.
+- **UserPromptSubmit hook** (`engram.py on-user-prompt`): counts prompts per session and fires mid-session digest + executive rebuild every `ENGRAM_DIGEST_EVERY` prompts (default 25). Keeps long sessions from going stale even without a PreCompact event.
+- `engram preview` subcommand: prints (and builds if missing) the executive cache for the current `cwd`. Useful for debugging.
+
 ### Changed
+- LLM calls now use Sonnet 4.6 (was Haiku 4.5). Haiku hit `Prompt is too long` on large contexts; Sonnet handles the merge reliably.
+
+### Fixed
+- Fire-and-forget subprocesses pass arguments as `--flag=value` (inline form) instead of `--flag value` (separate tokens). Project slugs like `-Users-sebabreguel-...` start with `-` and were mis-parsed as another flag by argparse, producing `expected one argument` errors on every PreCompact / UserPromptSubmit rebuild.
+
+### Changed (previous drop)
 - Consolidated 5 shell hooks into 2 inline `engram.py` invocations (`on-precompact`, `on-session-start`). Net -381 lines.
 - Pass A LLM calls now use Haiku 4.5 (was Sonnet).
 - Removed semantic error regex from session capture; now relies only on Claude Code's `is_error=true` tool-result signal.

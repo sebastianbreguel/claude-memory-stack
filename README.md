@@ -6,26 +6,23 @@ claude-engram fixes that. **~350 ambient tokens. No Docker, no API keys, no MCP.
 
 ## What you see
 
-When you open Claude Code, claude-engram injects a short note from your last session:
+When you open Claude Code, claude-engram injects a one-line executive summary from your last session:
 
 ```
-Learned preferences & practices:
-- User prefers uv, never pip — responds in Spanish
-- Terse responses, no docstrings unless asked
-
-Current context:
-- Was refactoring auth to JWT; signup still on old sessions
-- Next: wire signup to JWT flow
+next: wire signup to JWT flow → migrate legacy sessions → ship
 ```
 
-Claude picks up where you left off. No re-explaining.
+One line, zero latency. The merge (recap + memory + patterns) happens in the background *between* sessions, so opening is instant.
 
 ## How it works
 
 claude-engram has two jobs: **remember** and **inject**.
 
-1. **On compaction** — one background LLM pass reads your session and extracts atomic memories: preferences, project state, and a handoff paragraph. Stored in local SQLite, keyed by topic (same topic = one row, latest wins, no contradictions).
-2. **On session start** — ~350 tokens of what matters are injected, scoped to your current project. Preferences follow you everywhere; project state stays local and expires in 7 days.
+1. **While you work** — two triggers capture state:
+   - **Every 25 prompts** (UserPromptSubmit) — mid-session digest fires a background LLM pass to update memories.
+   - **On compaction** (PreCompact) — transcript → SQLite; digest + snapshot + pattern wiki refresh; executive summary rebuild.
+2. **Between sessions** — Sonnet merges Claude Code's own `※ recap` with engram's memories/patterns into a single-line executive summary, cached per project.
+3. **On session start** — the cached executive is injected (zero latency). Falls back to ~350-token inject if the cache is missing.
 
 That's the core. No config, no commands to run. It works while you work.
 
@@ -78,7 +75,7 @@ Everything lives in `~/.claude/memory.db` (SQLite) and `~/.claude/patterns/` (ma
 
 - **Captured**: session metadata, files touched, tool usage, error strings, and LLM-extracted memories.
 - **NOT captured**: no full transcripts, no code content, no secrets from `.env`.
-- **LLM calls**: one `claude --print` pass on compaction (~2-5K tokens, local to your session). No external API calls.
+- **LLM calls**: `claude --print` (Sonnet 4.6) on compaction + every 25 prompts (~2-5K tokens each, local to your session). No external API calls.
 - **Uninstall**: `./uninstall.sh` removes tools and hooks. Your data is preserved unless you delete it.
 
 ## CLI
@@ -114,46 +111,52 @@ Open `vambe-datascience` and you get vambe context. Switch to `claude-engram` an
 ## Architecture
 
 ```
-                          Claude Code
-                     ┌─────────────────┐
-                     │   SessionStart  │──────────────────────────────────┐
-                     │   PreCompact    │──────────────┐                  │
-                     └─────────────────┘              │                  │
-                                                      ▼                  ▼
-                                            engram.py on-precompact    engram.py on-session-start
-                                                      │                  │
-                                  ┌───────────────────┼──────────┐       │
-                                  ▼                   ▼          ▼       ▼
-                            [sync]               [async x2]   [sync]  [sync]
-                          memcapture            Haiku 4.5    mempatterns  memcapture
-                          parse JSONL         ┌───────────┐  update wiki  --inject
-                          upsert SQLite       │  digest    │     │        │
-                               │              │  snapshot  │     │        │
-                               ▼              └─────┬─────┘     ▼        ▼
-                                                    │      ~/.claude/  ~350 tokens
-                          ┌─────────────────────────┼──────┐ patterns/  injected as
-                          │      memory.db          │      │           additionalContext
-                          │                         ▼      │
-                          │  sessions ← facts              │
-                          │  memories ← (topic upsert)     │
-                          │  compactions ← snapshots        │
-                          │  files_touched, tool_usage      │
-                          │  facts_fts (FTS5)               │
-                          └────────────────────────────────-┘
+                              Claude Code hooks
+            ┌──────────────────┬──────────────────┬───────────────────┐
+            │  PreCompact      │  UserPromptSubmit│   SessionStart    │
+            └────────┬─────────┴─────────┬────────┴─────────┬─────────┘
+                     │                   │ (every 25)       │
+                     ▼                   ▼                  ▼
+            engram.py on-precompact  on-user-prompt   on-session-start
+                     │                   │                  │
+          ┌──────────┼──────────┐        │                  │
+          ▼          ▼          ▼        ▼                  ▼
+       [sync]    [async×3]  [sync]   [async×2]         [sync read]
+     memcapture  Sonnet 4.6 patterns  digest           executive
+                 ┌────────┐             + executive    cache read
+                 │digest  │                            (~90 chars)
+                 │snapshot│                               │
+                 │executive│                              ▼
+                 └────┬───┘                          additionalContext
+                      │                              (invisible) +
+                      ▼                              systemMessage
+             ┌──────────────────────────┐            (banner)
+             │       memory.db          │
+             │  sessions, facts,        │
+             │  memories (topic UPSERT) │
+             │  compactions, files,     │
+             │  tool_usage, facts_fts   │
+             └──────────────────────────┘
+             ┌──────────────────────────┐
+             │  ~/.claude/patterns/     │  Obsidian wiki
+             │  ~/.claude/engram/       │  executive cache
+             │      executive/<slug>.md │  (one per project)
+             └──────────────────────────┘
 ```
 
 **Data flow:**
-- **PreCompact (between sessions):** transcript → SQLite capture (sync) → two detached Haiku subprocesses extract memories + snapshot (async, fire-and-forget) → pattern wiki updated (sync)
-- **SessionStart (on open):** read `cwd` → query memories by project scope → inject ~350 tokens as invisible context + optional banner
-- **Concurrency:** no locks — `PRAGMA busy_timeout=5000` + `UNIQUE(topic)` absorb races
+- **PreCompact:** transcript → SQLite (sync) → 3 detached Sonnet subprocesses (digest + snapshot + executive) → pattern wiki (sync)
+- **UserPromptSubmit:** counter++; every 25 prompts → mid-session digest + executive rebuild (both fire-and-forget)
+- **SessionStart:** read cached executive (`<cwd-slug>.md`) → inject as `additionalContext`. Falls back to full `memcapture --inject` + banner if cache is missing.
+- **Concurrency:** no locks — `PRAGMA busy_timeout=5000` + `UNIQUE(topic)` absorb races; executive cache is overwrite-only.
 
 **Files (3 Python, 0 external deps):**
 
 | File | Lines | Role |
 |---|---|---|
-| `engram.py` | ~400 | CLI + hook orchestrator, Haiku dispatch, prompt templates |
-| `memcapture.py` | ~1,100 | JSONL parser, SQLite schema, inject builder, FTS5 search |
-| `mempatterns.py` | ~800 | Pattern detection (file co-edits, tool habits, errors), wiki generator |
+| `engram.py` | ~770 | CLI + hook orchestrator, Sonnet dispatch, prompt templates, executive cache |
+| `memcapture.py` | ~1,200 | JSONL parser, SQLite schema, inject builder, FTS5 search |
+| `mempatterns.py` | ~600 | Pattern detection (file co-edits, tool habits, errors), wiki generator |
 
 ## At a glance
 

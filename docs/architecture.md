@@ -1,6 +1,6 @@
 # Architecture
 
-claude-engram is a Claude Code plugin with **two hooks, one Python entrypoint**, and a local SQLite store. No daemon, no network I/O, no API keys.
+claude-engram is a Claude Code plugin with **three hooks, one Python entrypoint**, and a local SQLite store. No daemon, no network I/O, no API keys.
 
 ## File layout (after install)
 
@@ -9,6 +9,8 @@ claude-engram is a Claude Code plugin with **two hooks, one Python entrypoint**,
 ├── memory.db                    # SQLite — sessions, facts, memories, compactions
 ├── patterns/                    # Obsidian-compatible wiki (mempatterns output)
 ├── session-env/                 # Pre-compact work-state snapshots (markdown)
+├── engram/
+│   └── executive/<cwd-slug>.md  # Per-project executive summary cache (1-line)
 │
 ├── tools/
 │   ├── engram.py                # Unified CLI + hook orchestrator (single entrypoint)
@@ -23,15 +25,17 @@ claude-engram is a Claude Code plugin with **two hooks, one Python entrypoint**,
 
 ## Hook wiring
 
-Registered in `.claude-plugin/plugin.json` + `hooks/hooks.json`. Two events, two commands:
+Registered in `.claude-plugin/plugin.json` + `hooks/hooks.json`. Three events, three commands:
 
 ```json
 {
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command",
+    "SessionStart":     [{"hooks": [{"type": "command",
       "command": "uv run ${CLAUDE_PLUGIN_ROOT}/tools/engram.py on-session-start"}]}],
-    "PreCompact":   [{"hooks": [{"type": "command",
-      "command": "uv run ${CLAUDE_PLUGIN_ROOT}/tools/engram.py on-precompact"}]}]
+    "PreCompact":       [{"hooks": [{"type": "command",
+      "command": "uv run ${CLAUDE_PLUGIN_ROOT}/tools/engram.py on-precompact"}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command",
+      "command": "uv run ${CLAUDE_PLUGIN_ROOT}/tools/engram.py on-user-prompt"}]}]
   }
 }
 ```
@@ -43,18 +47,28 @@ Manual installs use `$HOME/.claude` instead of `$CLAUDE_PLUGIN_ROOT` — both pa
 ### PreCompact (`engram.py on-precompact`)
 
 1. **Synchronous:** parse transcript + upsert to `memory.db` (sessions, facts, files, tools).
-2. **Fire-and-forget:** spawn detached Haiku 4.5 subprocess for **digest** (preferences, practices, handoff paragraph) — result ingested back via stdin into `memories`.
-3. **Fire-and-forget:** spawn detached Haiku 4.5 subprocess for **snapshot** (JSON: task, files, last_error, summary) — stored in `compactions`.
+2. **Fire-and-forget:** spawn detached Sonnet 4.6 subprocess for **digest** (preferences, practices, handoff paragraph) — result ingested back via stdin into `memories`.
+3. **Fire-and-forget:** spawn detached Sonnet 4.6 subprocess for **snapshot** (JSON: task, files, last_error, summary) — stored in `compactions`.
 4. **Synchronous:** run `mempatterns --update` over the *previous* session's memories to refresh `~/.claude/patterns/`.
+5. **Fire-and-forget:** spawn detached Sonnet 4.6 subprocess for **executive** — merges Claude Code's `※ recap` with engram's inject_context into a single `next: …` line cached at `~/.claude/engram/executive/<cwd-slug>.md`.
 
-The fire-and-forget subprocesses use `start_new_session=True` so they survive the parent hook's exit. No lockfile — concurrent compactions are absorbed by `PRAGMA busy_timeout=5000` + `UNIQUE(topic)` on `memories`.
+The fire-and-forget subprocesses use `start_new_session=True` so they survive the parent hook's exit. No lockfile — concurrent compactions are absorbed by `PRAGMA busy_timeout=5000` + `UNIQUE(topic)` on `memories`. The executive cache is overwrite-only (latest wins).
+
+### UserPromptSubmit (`engram.py on-user-prompt`)
+
+1. Read `session_id` from payload; bump a per-session counter in `~/.claude/engram/counter.json`.
+2. If count `>= ENGRAM_DIGEST_EVERY` (default 25), fire-and-forget a **digest** subprocess + **executive** rebuild, then reset the counter.
+3. Returns immediately; the active session is never blocked.
+
+This keeps long sessions from going stale: if you hit compaction rarely, mid-session digests still refresh memories and the executive cache every ~25 turns.
 
 ### SessionStart (`engram.py on-session-start`)
 
 1. Read `cwd` from Claude Code's hook payload, derive `project_key`.
-2. Call `memcapture --inject --inject-project=<key>` to build ~350 tokens: durable memories (all projects) + ephemeral memories (this project only) + latest snapshot + per-project handoff paragraph.
-3. Optionally emit a banner (`ENGRAM_SHOW_BANNER=1` by default) via `systemMessage`.
-4. Return JSON with `hookSpecificOutput.additionalContext` — Claude Code injects this silently into the new session.
+2. **Fast path:** if `~/.claude/engram/executive/<cwd-slug>.md` exists, read it (~90 chars) and inject as `additionalContext`. Zero LLM call, zero latency.
+3. **Fallback:** call `memcapture --inject --inject-project=<key>` to build ~350 tokens: durable memories (all projects) + ephemeral memories (this project only) + latest snapshot + per-project handoff paragraph.
+4. Optionally emit a banner (`ENGRAM_SHOW_BANNER=1` by default) via `systemMessage`.
+5. Return JSON with `hookSpecificOutput.additionalContext` — Claude Code injects this silently into the new session.
 
 ## SQLite schema
 
@@ -123,6 +137,12 @@ PRAGMA busy_timeout = 5000;            -- collision absorber
 
 ## Why one entrypoint
 
-The v0.1 architecture had 4-5 shell scripts calling individual Python modules. v1 collapsed that to `engram.py` with argparse subcommands. The hooks just invoke `engram.py on-precompact` / `engram.py on-session-start`; everything else (capture, digest dispatch, snapshot dispatch, patterns update, banner) is regular Python inside one process.
+The v0.1 architecture had 4-5 shell scripts calling individual Python modules. v1 collapsed that to `engram.py` with argparse subcommands. The hooks just invoke `engram.py on-precompact` / `engram.py on-session-start` / `engram.py on-user-prompt`; everything else (capture, digest dispatch, snapshot dispatch, executive merge, patterns update, banner) is regular Python inside one process.
 
 This trades a tiny bit of startup time for a simpler mental model, a single place to debug, and no shell-quoting landmines when user settings paths contain spaces.
+
+## Why the executive cache
+
+Claude Code now emits its own `※ recap` (one-line summary of the current session, stored as `type:system, subtype:away_summary` in the session JSONL). engram extracts the latest recap matching the current `cwd`, merges it with its own inject_context, and asks Sonnet for a single `next: <step>` line. The merge happens between sessions (PreCompact or every 25 prompts) so SessionStart stays latency-free.
+
+Inputs grow over time (more memories, newer recap); the output stays one line. Sonnet re-compresses from scratch each rebuild — no stale bullets accumulate.
