@@ -248,6 +248,85 @@ Rules:
 
 After the facts, add ONE blank line, then a single handoff paragraph addressed to the NEXT Claude session working in this project. Start with "HANDOFF: " and write 2-4 sentences in natural prose: what were we doing, where did we leave off, what should the next session pick up. Be concrete, not meta."""
 
+EXEC_PROMPT = """Mergeá los dos insumos en un punteo ejecutivo para abrir la próxima sesión.
+
+## Insumo 1 — recap de Claude Code (qué estaba pasando al final)
+{recap}
+
+## Insumo 2 — contexto de engram (patterns, memorias, handoff propio)
+{context}
+
+## Output
+- 4 a 6 bullets, cada uno ≤80 chars
+- Primer bullet: proyecto + estado actual
+- Siguientes: próximo paso, constraints, patterns o errores recurrentes
+- Cada línea empieza con "- "
+- No dupliques info entre bullets. Accionable > descriptivo.
+
+Devolvé SOLO el punteo, sin preámbulo ni cierre.
+"""
+
+
+EXECUTIVE_DIR = Path.home() / ".claude" / "engram" / "executive"
+
+
+def _cwd_from_transcript(transcript: Path) -> str:
+    """First cwd found in a transcript. Empty string if none."""
+    try:
+        with transcript.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    obj = _json.loads(line)
+                except Exception:
+                    continue
+                cwd = obj.get("cwd")
+                if isinstance(cwd, str) and cwd:
+                    return cwd
+    except Exception:
+        pass
+    return ""
+
+
+def _latest_recap(cwd: str, max_files: int = 20) -> str | None:
+    """Find the most recent Claude Code away_summary entry for this cwd.
+
+    Scans up to `max_files` most-recent JSONL transcripts under
+    ~/.claude/projects/. Returns the content (without the "(disable recaps…)"
+    hint), or None if nothing matches.
+    """
+    projects_dir = Path.home() / ".claude" / "projects"
+    if not cwd or not projects_dir.exists():
+        return None
+    try:
+        candidates = sorted(
+            projects_dir.glob("*/*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )[:max_files]
+    except Exception:
+        return None
+    for path in candidates:
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    try:
+                        obj = _json.loads(line)
+                    except Exception:
+                        continue
+                    if obj.get("type") == "system" and obj.get("subtype") == "away_summary" and obj.get("cwd") == cwd:
+                        content = obj.get("content", "")
+                        if isinstance(content, str) and content.strip():
+                            return content.removesuffix(" (disable recaps in /config)").strip()
+        except Exception:
+            continue
+    return None
+
+
+def _executive_cache_path(cwd: str) -> Path:
+    slug = cwd.replace("/", "-").strip("-") or "default"
+    return EXECUTIVE_DIR / f"{slug}.md"
+
+
 SNAPSHOT_PROMPT = """Analyze this coding session transcript. Extract the current work state as JSON:
 
 {
@@ -401,6 +480,20 @@ def _on_precompact(_args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"patterns error: {e}", file=sys.stderr)
 
+    cwd = payload.get("cwd") or _cwd_from_transcript(transcript)
+    if cwd:
+        _fire_and_forget(
+            [
+                sys.executable,
+                str(Path(__file__)),
+                "_executive",
+                "--cwd",
+                cwd,
+                "--project-key",
+                cwd.replace("/", "-"),
+            ]
+        )
+
     _reset_counter()
     return 0
 
@@ -448,6 +541,19 @@ def _on_user_prompt(_args: argparse.Namespace) -> int:
                     project,
                 ]
             )
+            cwd = payload.get("cwd") or _cwd_from_transcript(transcript)
+            if cwd:
+                _fire_and_forget(
+                    [
+                        sys.executable,
+                        str(Path(__file__)),
+                        "_executive",
+                        "--cwd",
+                        cwd,
+                        "--project-key",
+                        cwd.replace("/", "-"),
+                    ]
+                )
         _write_counter(session_id, 0)
 
     print(_json.dumps({"continue": True}))
@@ -478,6 +584,62 @@ def _run_llm(args: argparse.Namespace) -> int:
     )
 
 
+def _on_executive(args: argparse.Namespace) -> int:
+    """Internal: merge latest recap + engram inject_context into a bullet-list
+    executive summary, cache to disk for next SessionStart.
+
+    Fire-and-forget from PreCompact / UserPromptSubmit; the cache is read by
+    _on_session_start. On any failure, silently no-ops (SessionStart falls
+    back to the live inject path).
+    """
+    cwd = args.cwd or ""
+    project_key = args.project_key or ""
+    if not cwd:
+        return 0
+
+    recap = _latest_recap(cwd) or ""
+
+    buf = io.StringIO()
+    try:
+        memcapture.run(_memcap_ns(inject=True, inject_project=project_key or None), out=buf)
+    except Exception as e:
+        _log_warning(f"executive: inject_context failed: {e}")
+    context = buf.getvalue().strip()
+
+    if not recap and not context:
+        return 0
+
+    prompt = EXEC_PROMPT.replace("{recap}", recap or "(sin recap disponible)").replace("{context}", context or "(sin contexto de engram)")
+    output = _run_haiku(prompt, chunk="").strip()
+    if not output:
+        return 0
+
+    cache = _executive_cache_path(cwd)
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(output + "\n", encoding="utf-8")
+    except Exception as e:
+        _log_warning(f"executive: cache write failed: {e}")
+    return 0
+
+
+def _preview(args: argparse.Namespace) -> int:
+    """Print the cached executive summary for a cwd. Builds it synchronously
+    if no cache exists yet. Useful for debugging and demoing without opening
+    a new session.
+    """
+    cwd = args.cwd or os.getcwd()
+    cache = _executive_cache_path(cwd)
+    if not cache.exists():
+        ns = argparse.Namespace(cwd=cwd, project_key=cwd.replace("/", "-"))
+        _on_executive(ns)
+    if cache.exists():
+        sys.stdout.write(cache.read_text(encoding="utf-8"))
+        return 0
+    sys.stdout.write("(no executive summary available — no recap, no context, or LLM unavailable)\n")
+    return 0
+
+
 def _on_session_start(_args: argparse.Namespace) -> int:
     raw = sys.stdin.read() if not sys.stdin.isatty() else ""
     try:
@@ -489,23 +651,36 @@ def _on_session_start(_args: argparse.Namespace) -> int:
 
     import memcapture
 
-    buf = io.StringIO()
-    memcapture.run(_memcap_ns(inject=True, inject_project=project_key or None), out=buf)
-    context = buf.getvalue()
+    executive = ""
+    if cwd:
+        cache = _executive_cache_path(cwd)
+        if cache.exists():
+            try:
+                executive = cache.read_text(encoding="utf-8").strip()
+            except Exception:
+                executive = ""
 
-    banner = ""
-    if os.environ.get("ENGRAM_SHOW_BANNER", "1") == "1":
-        buf2 = io.StringIO()
-        display_name = Path(cwd).name if cwd else ""
-        memcapture.run(
-            _memcap_ns(
-                banner=True,
-                banner_project=project_key or None,
-                banner_name=display_name or None,
-            ),
-            out=buf2,
-        )
-        banner = buf2.getvalue().strip()
+    if executive:
+        context = executive
+        banner = executive if os.environ.get("ENGRAM_SHOW_BANNER", "1") == "1" else ""
+    else:
+        buf = io.StringIO()
+        memcapture.run(_memcap_ns(inject=True, inject_project=project_key or None), out=buf)
+        context = buf.getvalue()
+
+        banner = ""
+        if os.environ.get("ENGRAM_SHOW_BANNER", "1") == "1":
+            buf2 = io.StringIO()
+            display_name = Path(cwd).name if cwd else ""
+            memcapture.run(
+                _memcap_ns(
+                    banner=True,
+                    banner_project=project_key or None,
+                    banner_name=display_name or None,
+                ),
+                out=buf2,
+            )
+            banner = buf2.getvalue().strip()
 
     out: dict = {
         "continue": True,
@@ -575,6 +750,15 @@ def build_parser() -> argparse.ArgumentParser:
     rl.add_argument("--session-id", dest="session_id", required=True)
     rl.add_argument("--project", required=True)
     rl.set_defaults(func=_run_llm)
+
+    ex = sub.add_parser("_executive", help="(internal) build executive summary cache for a cwd")
+    ex.add_argument("--cwd", required=True)
+    ex.add_argument("--project-key", dest="project_key", default="")
+    ex.set_defaults(func=_on_executive)
+
+    pv = sub.add_parser("preview", help="preview SessionStart executive summary (for debug/demo)")
+    pv.add_argument("--cwd", default=None)
+    pv.set_defaults(func=_preview)
 
     return p
 
