@@ -70,8 +70,9 @@ ERROR_LOOP_THRESHOLD = 3
 MAX_USER_MESSAGE_LENGTH = 2000
 RAPID_CORRECTION_WINDOW_SECONDS = 60
 RAPID_CORRECTION_MIN_COUNT = 2
-# Restart-cluster thresholds — calibrated on 495 real sessions (post-caveman cleanup).
-# ≥3 user msgs filters out 87% of ephemeral JSONLs (hooks, subagents, rapid-fire invocations).
+# Restart-cluster thresholds — conservative educated guesses, no ground truth.
+# ≥3 user msgs filters out ~87% of ephemeral JSONLs (hooks, subagents, rapid-fire invocations)
+# observed on local data. 30min/n=3 errs toward false negatives over false positives.
 MIN_USER_MSGS_PER_SESSION = 3
 RESTART_CLUSTER_SIZE = 3
 RESTART_WINDOW_MINUTES = 30
@@ -418,9 +419,10 @@ def _print_summary(report: dict) -> None:
     if not totals:
         print("  No friction signals detected. Nice.")
         return
-    print("\nSignal totals:")
+    print(f"\nSignal totals (denominator: {sessions} sessions):")
     for signal, count in sorted(totals.items(), key=lambda x: -x[1]):
-        print(f"  {signal}: {count}")
+        pct = (count / sessions * 100) if sessions else 0
+        print(f"  {signal}: {count} ({pct:.1f}%)")
     print("\nTop projects:")
     ranked = sorted(
         projects.items(),
