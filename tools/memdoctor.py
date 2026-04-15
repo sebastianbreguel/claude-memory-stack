@@ -70,6 +70,11 @@ ERROR_LOOP_THRESHOLD = 3
 MAX_USER_MESSAGE_LENGTH = 2000
 RAPID_CORRECTION_WINDOW_SECONDS = 60
 RAPID_CORRECTION_MIN_COUNT = 2
+# Restart-cluster thresholds — calibrated on 495 real sessions (post-caveman cleanup).
+# ≥3 user msgs filters out 87% of ephemeral JSONLs (hooks, subagents, rapid-fire invocations).
+MIN_USER_MSGS_PER_SESSION = 3
+RESTART_CLUSTER_SIZE = 3
+RESTART_WINDOW_MINUTES = 30
 
 RULES_MAP = {
     "correction-heavy": (
@@ -82,6 +87,10 @@ RULES_MAP = {
         "Complete the FULL task before stopping. Don't stop early — if the user asked for N items, deliver all N before handing back."
     ),
     "rapid-corrections": ("Two corrections within a minute is a frustration spike. Stop and ask what the user wants before continuing."),
+    "restart-cluster": (
+        "If the user restarted sessions 3+ times in this project within 30 minutes, something is confusing you. "
+        "Ask what went wrong in the previous attempts before retrying."
+    ),
 }
 
 
@@ -214,6 +223,39 @@ def detect_rapid_corrections(events: list[dict]) -> str | None:
     return None
 
 
+def _session_meta(events: list[dict]) -> tuple[datetime | None, int]:
+    """Return (first_timestamp, count_of_real_user_msgs) — used for restart-cluster filtering."""
+    first_ts = None
+    n_user = 0
+    for ev in events:
+        if first_ts is None:
+            ts = _parse_ts(ev.get("timestamp"))
+            if ts:
+                first_ts = ts
+        if ev.get("type") == "user" and not ev.get("isMeta"):
+            content = (ev.get("message") or {}).get("content")
+            if isinstance(content, str) and content and not _is_meta_message(content):
+                n_user += 1
+    return first_ts, n_user
+
+
+def count_restart_clusters(starts: list[datetime]) -> int:
+    """Non-overlapping count of ≥RESTART_CLUSTER_SIZE session starts within RESTART_WINDOW_MINUTES."""
+    starts = sorted(starts)
+    if len(starts) < RESTART_CLUSTER_SIZE:
+        return 0
+    window = timedelta(minutes=RESTART_WINDOW_MINUTES)
+    count = 0
+    i = 0
+    while i <= len(starts) - RESTART_CLUSTER_SIZE:
+        if starts[i + RESTART_CLUSTER_SIZE - 1] - starts[i] <= window:
+            count += 1
+            i += RESTART_CLUSTER_SIZE  # non-overlapping window
+        else:
+            i += 1
+    return count
+
+
 def detect_signals(events: list[dict]) -> list[str]:
     return [
         s
@@ -337,6 +379,7 @@ def _iter_sessions(project_filter: str | None = None):
 def _analyze(project_filter: str | None = None) -> dict:
     """Walk sessions, return aggregated signal counts + per-project breakdown + error samples."""
     per_project: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    starts_by_project: dict[str, list[datetime]] = defaultdict(list)
     error_samples: list[tuple[str, str]] = []
     session_count = 0
     for project, _sid, events in _iter_sessions(project_filter):
@@ -348,6 +391,13 @@ def _analyze(project_filter: str | None = None) -> dict:
             err = extract_error_context(events)
             if err:
                 error_samples.append((project, normalize_error(err)))
+        first_ts, n_user = _session_meta(events)
+        if first_ts and n_user >= MIN_USER_MSGS_PER_SESSION:
+            starts_by_project[project].append(first_ts)
+    for project, starts in starts_by_project.items():
+        clusters = count_restart_clusters(starts)
+        if clusters:
+            per_project[project]["restart-cluster"] += clusters
     totals: dict[str, int] = defaultdict(int)
     for sig_counts in per_project.values():
         for signal, count in sig_counts.items():

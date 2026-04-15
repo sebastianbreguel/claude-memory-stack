@@ -6,10 +6,13 @@ Fixtures ported from millionco/claude-doctor (MIT).
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 from memdoctor import (
+    _session_meta,
+    count_restart_clusters,
     detect_correction_heavy,
     detect_error_loop,
     detect_keep_going,
@@ -245,6 +248,50 @@ class TestRapidCorrections:
 
     def test_ignores_happy_session(self, happy_session):
         assert detect_rapid_corrections(happy_session) is None
+
+
+class TestRestartClusters:
+    def test_counts_single_cluster(self):
+        base = datetime(2026, 4, 15, 10, 0, 0)
+        starts = [base, base + timedelta(minutes=5), base + timedelta(minutes=10)]
+        assert count_restart_clusters(starts) == 1
+
+    def test_non_overlapping_windows(self):
+        base = datetime(2026, 4, 15, 10, 0, 0)
+        starts = [
+            base,
+            base + timedelta(minutes=5),
+            base + timedelta(minutes=10),  # cluster 1
+            base + timedelta(minutes=60),
+            base + timedelta(minutes=65),
+            base + timedelta(minutes=70),  # cluster 2 (outside first window)
+        ]
+        assert count_restart_clusters(starts) == 2
+
+    def test_gap_too_large(self):
+        base = datetime(2026, 4, 15, 10, 0, 0)
+        starts = [base, base + timedelta(minutes=45), base + timedelta(minutes=90)]
+        assert count_restart_clusters(starts) == 0
+
+    def test_below_minimum_size(self):
+        base = datetime(2026, 4, 15, 10, 0, 0)
+        assert count_restart_clusters([base, base + timedelta(minutes=1)]) == 0
+
+    def test_empty_list(self):
+        assert count_restart_clusters([]) == 0
+
+    def test_session_meta_counts_only_real_user_msgs(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        path.write_text(
+            '{"type":"user","timestamp":"2026-04-15T10:00:00.000Z","message":{"content":"real message"}}\n'
+            '{"type":"user","isMeta":true,"timestamp":"2026-04-15T10:00:05.000Z","message":{"content":"meta"}}\n'
+            '{"type":"user","timestamp":"2026-04-15T10:00:10.000Z","message":{"content":"<system-reminder>skip</system-reminder>"}}\n'
+            '{"type":"assistant","timestamp":"2026-04-15T10:00:15.000Z","message":{"content":"reply"}}\n'
+            '{"type":"user","timestamp":"2026-04-15T10:00:20.000Z","message":{"content":"another real"}}\n'
+        )
+        first_ts, n_user = _session_meta(parse_jsonl(path))
+        assert first_ts is not None
+        assert n_user == 2
 
 
 class TestPerProjectRules:
