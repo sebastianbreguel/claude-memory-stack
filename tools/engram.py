@@ -745,7 +745,8 @@ def build_parser() -> argparse.ArgumentParser:
     dr = sub.add_parser("doctor", help="detect friction signals across sessions")
     dr.add_argument("--project", type=str, default=None, help="filter by project path substring")
     dr.add_argument("--rules", action="store_true", help="print CLAUDE.md rule suggestions")
-    dr.set_defaults(func=lambda a: memdoctor.run(argparse.Namespace(project=a.project, rules=a.rules)))
+    dr.add_argument("--per-project", action="store_true", help="with --rules, emit one rule block per project")
+    dr.set_defaults(func=lambda a: memdoctor.run(argparse.Namespace(project=a.project, rules=a.rules, per_project=a.per_project)))
 
     op = sub.add_parser("on-precompact", help="hook: orchestrate PreCompact work")
     op.set_defaults(func=_on_precompact)

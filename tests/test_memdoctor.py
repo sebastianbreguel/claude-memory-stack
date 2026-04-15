@@ -203,6 +203,34 @@ class TestEnrichFromMemory:
         assert enrich_from_memory("TotallyUnrelatedZzzError xxxxx", db_path=seeded_db) is None
 
 
+class TestPerProjectRules:
+    def test_per_project_rules_output(self, capsys):
+        from memdoctor import _print_rules_per_project
+
+        report = {
+            "sessions": 10,
+            "projects": {
+                "/proj/a": {"error-loop": 5, "correction-heavy": 3},
+                "/proj/b": {"keep-going-loop": 2},
+                "/proj/c": {"error-loop": 1},  # below threshold, skip
+            },
+            "totals": {},
+        }
+        _print_rules_per_project(report)
+        out = capsys.readouterr().out
+        assert "/proj/a" in out
+        assert "/proj/b" in out
+        assert "/proj/c" not in out  # 1 < MIN_CORRECTIONS_TO_FLAG
+        # /proj/a comes first (higher total)
+        assert out.index("/proj/a") < out.index("/proj/b")
+
+    def test_per_project_empty_report(self, capsys):
+        from memdoctor import _print_rules_per_project
+
+        _print_rules_per_project({"sessions": 0, "projects": {}, "totals": {}})
+        assert "No per-project rules" in capsys.readouterr().out
+
+
 class TestMetaFiltering:
     def test_filters_system_reminder_meta_messages(self, tmp_path):
         path = tmp_path / "meta.jsonl"
