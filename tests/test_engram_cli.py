@@ -84,6 +84,59 @@ def test_on_precompact_captures_session(tmp_path, monkeypatch):
     assert result.returncode == 0, f"on-precompact failed: {result.stderr}"
 
 
+def test_score_turn_prioritizes_corrections_over_acks():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("engram_mod", ENGRAM)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    correction = mod._score_turn("user", "No, eso está mal, usa uv en vez de pip")
+    ack = mod._score_turn("user", "dale")
+    assistant_narr = mod._score_turn("assistant", "OK")
+    error_mention = mod._score_turn("user", "got a Traceback on this run")
+
+    assert correction > 0.8, f"correction should be high-salience, got {correction}"
+    assert ack < 0.2, f"bare ack should be low-salience, got {ack}"
+    assert assistant_narr < 0.5, f"short assistant turn should be penalized, got {assistant_narr}"
+    assert error_mention > 0.6, f"error mention should boost score, got {error_mention}"
+
+
+def test_extract_chunk_keeps_recency_and_salience(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("engram_mod", ENGRAM)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    transcript = tmp_path / "t.jsonl"
+    lines = []
+    # 60 filler turns (low salience)
+    for i in range(60):
+        lines.append(_json.dumps({"type": "user", "message": {"content": f"dale {i}"}}))
+        lines.append(_json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}}))
+    # 1 early high-salience correction buried in filler
+    lines.insert(
+        10,
+        _json.dumps({"type": "user", "message": {"content": "No, nunca mockees la DB en estos tests — fallamos antes"}}),
+    )
+    # last 20 turns: distinct markers so we can assert recency
+    for i in range(10):
+        lines.append(_json.dumps({"type": "user", "message": {"content": f"RECENT_USER_{i} discussing deploy plan here"}}))
+        lines.append(
+            _json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": f"RECENT_ASSISTANT_{i} acknowledged"}]}})
+        )
+    transcript.write_text("\n".join(lines))
+
+    out = mod._extract_chunk(transcript, tail_lines=500, max_chars=1500)
+
+    assert len(out) <= 1500
+    assert "RECENT_USER_9" in out, "last turns must survive compression"
+    assert "RECENT_ASSISTANT_9" in out, "last turns must survive compression"
+    assert "nunca mockees la DB" in out, "early high-salience correction must survive"
+    assert "..." in out, "compressed output should contain gap marker"
+
+
 def test_hooks_json_uses_engram_inline():
     """After Task 8, hooks.json references engram.py, not .sh."""
     config = _json.loads((REPO / "hooks" / "hooks.json").read_text())

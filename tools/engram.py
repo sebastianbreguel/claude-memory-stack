@@ -96,8 +96,44 @@ def _find_transcript(session_id: str) -> tuple[Path, str] | None:
     return None
 
 
+_SALIENCE_RECENCY_KEEP = 20
+_CORRECTION_MARKERS = ("no,", "no.", "stop", "wait", "actually", "en realidad", "no es", "no quiero", "don't", "undo")
+_ACK_TOKENS = {"ok", "dale", "si", "sí", "yes", "no", "gracias", "thanks", "yap", "ya", "k"}
+_ERROR_MARKERS = ("error", "failed", "traceback", "exception", "errno")
+_DECISION_MARKERS = ("let's ", "we'll ", "hagamos", "vamos a ", "prefiero", "quiero que", "decide")
+
+
+def _score_turn(role: str, text: str) -> float:
+    """Assign 0.0–1.0 salience to a single turn. Higher = more likely to survive compression."""
+    stripped = text.strip()
+    low = stripped.lower()
+    score = 0.5
+
+    if role == "user":
+        if any(m in low[:60] for m in _CORRECTION_MARKERS):
+            score += 0.4
+        if any(m in low for m in _DECISION_MARKERS):
+            score += 0.15
+        if low in _ACK_TOKENS or (len(stripped) < 15 and low.rstrip(".!?") in _ACK_TOKENS):
+            score -= 0.45
+
+    if any(m in low for m in _ERROR_MARKERS):
+        score += 0.2
+
+    if role == "assistant" and len(stripped) < 50:
+        score -= 0.15
+
+    return max(0.0, min(1.0, score))
+
+
 def _extract_chunk(transcript: Path, tail_lines: int = 800, max_chars: int = 6000) -> str:
-    """Extract the tail of a transcript without reading the whole file into memory."""
+    """Extract tail of transcript, compressed by salience when over budget.
+
+    Compression policy:
+      1. Always preserve the last _SALIENCE_RECENCY_KEEP turns (recency matters for handoff).
+      2. From remaining older turns, pack highest-salience first until max_chars.
+      3. Re-emit in chronological order with '...' between non-contiguous kept turns.
+    """
     from collections import deque
 
     tail: deque[str] = deque(maxlen=tail_lines)
@@ -105,7 +141,7 @@ def _extract_chunk(transcript: Path, tail_lines: int = 800, max_chars: int = 600
         for raw in fh:
             tail.append(raw)
 
-    msgs: list[str] = []
+    turns: list[tuple[str, str, float]] = []
     for raw in tail:
         line = raw.strip()
         if not line:
@@ -118,19 +154,81 @@ def _extract_chunk(transcript: Path, tail_lines: int = 800, max_chars: int = 600
         if t == "user":
             content = obj.get("message", {}).get("content", "")
             if isinstance(content, str) and len(content) > 5:
-                msgs.append("USER: " + content[:500])
+                text = content[:500]
+                turns.append(("USER", text, _score_turn("user", text)))
         elif t == "assistant":
             blocks = obj.get("message", {}).get("content", [])
             if isinstance(blocks, list):
                 for b in blocks:
                     if isinstance(b, dict) and b.get("type") == "text":
-                        msgs.append("ASSISTANT: " + b.get("text", "")[:500])
+                        text = b.get("text", "")[:500]
+                        if text:
+                            turns.append(("ASSISTANT", text, _score_turn("assistant", text)))
                         break
-    out = "\n".join(msgs)
-    if len(out) > max_chars:
-        half = max_chars // 2
-        out = out[:half] + "\n...\n" + out[-half:]
-    return out
+
+    if not turns:
+        return ""
+
+    def _render(idxs: list[int]) -> str:
+        out: list[str] = []
+        prev = -2
+        for i in idxs:
+            if prev >= 0 and i - prev > 1:
+                out.append("...")
+            role, text, _ = turns[i]
+            out.append(f"{role}: {text}")
+            prev = i
+        return "\n".join(out)
+
+    all_idxs = list(range(len(turns)))
+    full = _render(all_idxs)
+    if len(full) <= max_chars:
+        return full
+
+    total = len(turns)
+
+    def _adjusted_score(i: int) -> float:
+        pos_from_end = total - 1 - i
+        base = turns[i][2]
+        if pos_from_end < _SALIENCE_RECENCY_KEEP:
+            # Recent turns get +1.0 to +0.7 (newest = biggest bonus), making them dominate.
+            bonus = 1.0 - 0.3 * (pos_from_end / max(1, _SALIENCE_RECENCY_KEEP))
+            return base + bonus
+        return base
+
+    def _line_cost(i: int) -> int:
+        role, text, _ = turns[i]
+        return len(role) + len(text) + 3
+
+    GAP_COST = 4  # "...\n"
+    ranked = sorted(range(total), key=lambda i: (_adjusted_score(i), -i), reverse=True)
+
+    keep: set[int] = set()
+    budget = 0
+    for i in ranked:
+        c = _line_cost(i)
+        if budget + c + GAP_COST > max_chars:
+            continue
+        keep.add(i)
+        budget += c
+
+    if not keep:
+        keep.add(total - 1)
+
+    rendered = _render(sorted(keep))
+    if len(rendered) <= max_chars:
+        return rendered
+
+    # Gaps underestimated — drop lowest-scoring kept turns until the render fits.
+    drop_order = sorted(keep, key=_adjusted_score)
+    for i in drop_order:
+        if len(keep) <= 1:
+            break
+        keep.discard(i)
+        rendered = _render(sorted(keep))
+        if len(rendered) <= max_chars:
+            return rendered
+    return rendered
 
 
 DIGEST_PROMPT = """Analyze this coding session transcript. Extract concrete, reusable facts as atomic memories.
