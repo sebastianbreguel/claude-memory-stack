@@ -12,9 +12,10 @@ When you open Claude Code, claude-engram injects a 3-bullet executive summary fr
 - status: claude-engram MVP+D2 completo, 79 tests passing
 - last change: D2 error-loop enrichment con memory.db cross-reference
 - next: fix install.sh memdoctor → translate EXEC_PROMPT → docs
+friction: correction-heavy(4x), error-loop(2x) (run: engram doctor)
 ```
 
-Three bullets, zero latency. The merge (recap + memory + patterns) happens in the background *between* sessions, so opening is instant.
+Three bullets, zero latency. The merge (recap + memory + patterns) happens in the background *between* sessions, so opening is instant. The optional `friction:` line surfaces when `memdoctor` detects active signals for the current project.
 
 ## How it works
 
@@ -87,9 +88,13 @@ Everything lives in `~/.claude/memory.db` (SQLite) and `~/.claude/patterns/` (ma
 ## CLI
 
 ```bash
+uv run ~/.claude/tools/engram.py --version          # print installed version
+uv run ~/.claude/tools/engram.py verify-install     # check repo ↔ ~/.claude/tools in sync
 uv run ~/.claude/tools/engram.py stats              # what claude-engram knows
 uv run ~/.claude/tools/engram.py memories           # list learned memories
-uv run ~/.claude/tools/engram.py forget "topic"     # delete a memory
+uv run ~/.claude/tools/engram.py forget "topic"     # delete one memory
+uv run ~/.claude/tools/engram.py forget --expired --dry-run   # preview stale-ephemeral cleanup (>7d)
+uv run ~/.claude/tools/engram.py forget --project X --dry-run # preview project-scoped cleanup
 uv run ~/.claude/tools/engram.py search <query>     # FTS5 search over captured facts
 uv run ~/.claude/tools/engram.py doctor             # friction signals (correction-heavy, error-loop, ...)
 uv run ~/.claude/tools/engram.py preview            # current executive summary

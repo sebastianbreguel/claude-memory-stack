@@ -8,13 +8,21 @@ All invocations use `uv run` — the script declares its dependencies inline (`#
 
 ```bash
 # Inspect what claude-engram knows
+uv run ~/.claude/tools/engram.py --version          # print installed version
+uv run ~/.claude/tools/engram.py verify-install     # SHA256-check repo tools vs ~/.claude/tools (drift guard)
 uv run ~/.claude/tools/engram.py stats              # counts, durability split, projects
 uv run ~/.claude/tools/engram.py memories           # list all learned memories
-uv run ~/.claude/tools/engram.py forget <topic>     # delete a memory by topic
 uv run ~/.claude/tools/engram.py search <query>     # FTS5 search over captured facts
 uv run ~/.claude/tools/engram.py log --tail 20      # tail ~/.claude/engram.log (background LLM failures)
 
-# Friction signals (memdoctor)
+# Forget memories (single or bulk; exactly one mode required)
+uv run ~/.claude/tools/engram.py forget <topic>                 # delete one memory by topic
+uv run ~/.claude/tools/engram.py forget --expired               # delete ephemeral memories older than 7 days
+uv run ~/.claude/tools/engram.py forget --project <key>         # delete ephemerals for a project (cwd substring)
+uv run ~/.claude/tools/engram.py forget --expired --dry-run     # preview without deleting
+uv run ~/.claude/tools/engram.py forget --project <key> --dry-run
+
+# Friction signals (memdoctor). Top signals also surface on the SessionStart banner.
 uv run ~/.claude/tools/engram.py doctor              # detect correction-heavy, error-loop, keep-going, rapid-corrections, restart-cluster
 uv run ~/.claude/tools/engram.py doctor --per-project   # one scoped rule block per project
 
@@ -27,6 +35,8 @@ uv run ~/.claude/tools/engram.py patterns --report   # detected file co-edits, t
 uv run ~/.claude/tools/engram.py patterns --status   # wiki stats
 uv run ~/.claude/tools/engram.py patterns --update   # rebuild wiki (normally happens on PreCompact)
 ```
+
+`verify-install` must be run from the repo (never from the install path). It reports `drift` (SHA mismatch), `missing` (installed but deleted), or `OK` (all in sync). Exit code 0 = sync, 1 = drift/missing. Remedy: re-run `./install.sh`.
 
 ## Capture (manual)
 
