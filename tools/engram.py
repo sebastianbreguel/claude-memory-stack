@@ -872,6 +872,35 @@ def _verify_install(_args: argparse.Namespace) -> int:
     return 1
 
 
+def _self_check(args: argparse.Namespace) -> int:
+    """Detect vague-prompt → tool-cascade pattern: sessions where user prompts were
+    short but Claude fired many tools. Highest-cost failure mode per your CLAUDE.md
+    rule 'Short prompt + non-trivial task = red flag'."""
+    import sqlite3
+
+    db_path = Path.home() / ".claude" / "memory.db"
+    if not db_path.exists():
+        print("No memory.db. Run a session first.")
+        return 1
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute(
+        "SELECT project, topic, message_count, tool_count, captured_at "
+        "FROM sessions WHERE message_count >= 3 AND tool_count >= 15 "
+        "AND LENGTH(COALESCE(topic, '')) < 80 "
+        "ORDER BY (CAST(tool_count AS REAL) / message_count) DESC LIMIT ?",
+        (args.limit,),
+    ).fetchall()
+    if not rows:
+        print("No vague-prompt cascades detected. Nice.")
+        return 0
+    print(f"{len(rows)} sessions where a short/vague prompt triggered >=15 tool calls:")
+    print("Rule: CLAUDE.md 'Explicit paths' + 'Short prompt + non-trivial task = red flag'\n")
+    for project, topic, msgs, tools, when in rows:
+        topic_trim = (topic or "<no topic>").replace("\n", " ")[:70]
+        print(f"  [{when[:10]}] {project[:28]:<28} tools={tools:>3} msgs={msgs:>3}  {topic_trim!r}")
+    return 0
+
+
 def _on_session_start(_args: argparse.Namespace) -> int:
     raw = sys.stdin.read() if not sys.stdin.isatty() else ""
     try:
@@ -976,6 +1005,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     st = sub.add_parser("stats", help="capture statistics")
     st.set_defaults(func=lambda _a: memcapture.run(_memcap_ns(stats=True)))
+
+    sc = sub.add_parser("self-check", help="detect vague-prompt → tool-cascade sessions (your prompting habits)")
+    sc.add_argument("--limit", type=int, default=10, help="max sessions to show (default 10)")
+    sc.set_defaults(func=_self_check)
 
     mm = sub.add_parser("memories", help="list learned memories")
     mm.set_defaults(func=lambda _a: memcapture.run(_memcap_ns(memories="*")))

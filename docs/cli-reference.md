@@ -22,6 +22,10 @@ uv run ~/.claude/tools/engram.py forget --project <key>         # delete ephemer
 uv run ~/.claude/tools/engram.py forget --expired --dry-run     # preview without deleting
 uv run ~/.claude/tools/engram.py forget --project <key> --dry-run
 
+# Self-check: detect YOUR prompting habits (vague prompt → tool cascade)
+uv run ~/.claude/tools/engram.py self-check         # last 10 vague-prompt cascades
+uv run ~/.claude/tools/engram.py self-check --limit 20
+
 # Friction signals (memdoctor). Top signals also surface on the SessionStart banner.
 uv run ~/.claude/tools/engram.py doctor              # detect correction-heavy, error-loop, keep-going, rapid-corrections, restart-cluster
 uv run ~/.claude/tools/engram.py doctor --per-project   # one scoped rule block per project
