@@ -6,13 +6,15 @@ claude-engram fixes that. **~350 ambient tokens. No Docker, no API keys, no MCP.
 
 ## What you see
 
-When you open Claude Code, claude-engram injects a one-line executive summary from your last session:
+When you open Claude Code, claude-engram injects a 3-bullet executive summary from your last session:
 
 ```
-next: wire signup to JWT flow → migrate legacy sessions → ship
+- status: claude-engram MVP+D2 completo, 79 tests passing
+- last change: D2 error-loop enrichment con memory.db cross-reference
+- next: fix install.sh memdoctor → translate EXEC_PROMPT → docs
 ```
 
-One line, zero latency. The merge (recap + memory + patterns) happens in the background *between* sessions, so opening is instant.
+Three bullets, zero latency. The merge (recap + memory + patterns) happens in the background *between* sessions, so opening is instant.
 
 ## How it works
 
@@ -21,7 +23,7 @@ claude-engram has two jobs: **remember** and **inject**.
 1. **While you work** — two triggers capture state:
    - **Every 25 prompts** (UserPromptSubmit) — mid-session digest fires a background LLM pass to update memories.
    - **On compaction** (PreCompact) — transcript → SQLite; digest + snapshot + pattern wiki refresh; executive summary rebuild.
-2. **Between sessions** — Sonnet merges Claude Code's own `※ recap` with engram's memories/patterns into a single-line executive summary, cached per project.
+2. **Between sessions** — Sonnet merges Claude Code's own `※ recap` with engram's memories/patterns into a 3-bullet executive summary, cached per project.
 3. **On session start** — the cached executive is injected (zero latency). Falls back to ~350-token inject if the cache is missing.
 
 That's the core. No config, no commands to run. It works while you work.
@@ -58,6 +60,10 @@ cd claude-engram && ./install.sh
 # Uninstall (keeps your memory.db data)
 cd claude-engram && ./uninstall.sh
 ```
+
+## Why not built-in memory?
+
+Claude Code has auto-memory (`MEMORY.md`) — it stores what you explicitly tell it to remember. claude-engram watches what you *actually do*: it extracts decisions, errors, preferences, and project state from every session automatically. It scopes memories per project, detects workflow patterns across sessions, and rebuilds a structured executive summary so your next session starts exactly where you left off — without you lifting a finger.
 
 ## How it compares
 

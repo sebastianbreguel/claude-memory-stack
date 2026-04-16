@@ -15,6 +15,7 @@ rm -f "$CLAUDE_DIR/tools/engram.py"
 rm -f "$CLAUDE_DIR/tools/memcapture.py"
 rm -f "$CLAUDE_DIR/tools/memcompile.py"
 rm -f "$CLAUDE_DIR/tools/mempatterns.py"
+rm -f "$CLAUDE_DIR/tools/memdoctor.py"
 rm -f "$CLAUDE_DIR/tools/memdashboard.py"  # legacy, may not exist
 # Legacy shell hooks (v0.1) — remove if present from older installs
 rm -f "$CLAUDE_DIR/hooks/memcapture-hook.sh"

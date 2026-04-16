@@ -77,6 +77,7 @@ class MemoryDB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self._create_tables()
+        self._migrate()
 
     def _create_tables(self) -> None:
         self.conn.executescript("""
@@ -159,6 +160,18 @@ class MemoryDB:
             pass  # FTS5 not available on this SQLite build
 
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Run incremental schema migrations gated by PRAGMA user_version."""
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+
+        # -- migration 1: (reserved for future column additions)
+        # if version < 1:
+        #     self.conn.execute("ALTER TABLE sessions ADD COLUMN new_col TEXT")
+        #     self.conn.execute("PRAGMA user_version = 1")
+        #     self.conn.commit()
+
+        _ = version  # current schema is version 0
 
     def _content_hash(self, content: str) -> str:
         return hashlib.md5(content.encode()).hexdigest()[:12]

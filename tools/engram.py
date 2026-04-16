@@ -249,25 +249,25 @@ Rules:
 
 After the facts, add ONE blank line, then a single handoff paragraph addressed to the NEXT Claude session working in this project. Start with "HANDOFF: " and write 2-4 sentences in natural prose: what were we doing, where did we leave off, what should the next session pick up. Be concrete, not meta."""
 
-EXEC_PROMPT = """Mergeá recap + context en un punteo ejecutivo de 3 líneas para abrir la próxima sesión.
+EXEC_PROMPT = """Merge recap + context into a 3-bullet executive summary to open the next session.
 
 RECAP: {recap}
 CONTEXT: {context}
 
-Formato EXACTO (3 bullets, en este orden, cada uno ≤90 chars):
-- status: <proyecto + estado actual>
-- last change: <lo último que se hizo o decidió>
-- next: <próxima acción; uní pasos secuenciales con " → ", máx 3>
+EXACT format (3 bullets, in this order, each ≤90 chars):
+- status: <project + current state>
+- last change: <last thing done or decided>
+- next: <next action; join sequential steps with " → ", max 3>
 
-Sin paths absolutos, sin "Prioridad", sin comillas de code, sin preámbulo ni cierre.
-Si falta info para un campo, escribí "- <key>: —".
+No absolute paths, no "Priority", no code backticks, no preamble or closing.
+If info is missing for a field, write "- <key>: —".
 
-Ejemplo:
+Example:
 - status: claude-engram post-refactor, 46/46 tests
-- last change: fix argparse --flag=value en fire-and-forget
-- next: dispatcher DISPATCH dict → integrar latest_recap() → docs
+- last change: fix argparse --flag=value in fire-and-forget
+- next: dispatcher DISPATCH dict → integrate latest_recap() → docs
 
-Devolvé SOLO las 3 líneas.
+Return ONLY the 3 lines.
 """
 
 
@@ -347,12 +347,12 @@ Rules:
 - Output ONLY valid JSON, no commentary"""
 
 
-def _run_haiku(prompt: str, chunk: str, timeout: int = 120) -> str:
+def _run_llm(prompt: str, chunk: str, timeout: int = 120) -> str:
     if os.environ.get("ENGRAM_SKIP_LLM") == "1":
         return ""
     claude_bin = shutil.which("claude")
     if not claude_bin:
-        _log_warning("claude CLI not found in PATH; skipping Haiku call")
+        _log_warning("claude CLI not found in PATH; skipping LLM call")
         return ""
     try:
         result = subprocess.run(
@@ -573,7 +573,7 @@ def _run_llm(args: argparse.Namespace) -> int:
     chunk = _extract_chunk(Path(args.transcript), tail_lines=cfg["tail_lines"], max_chars=cfg["max_chars"])
     if len(chunk) < 50:
         return 0
-    output = _run_haiku(cfg["prompt"], chunk)
+    output = _run_llm(cfg["prompt"], chunk)
     if not output:
         return 0
     import memcapture
@@ -609,8 +609,8 @@ def _on_executive(args: argparse.Namespace) -> int:
     if not recap and not context:
         return 0
 
-    prompt = EXEC_PROMPT.replace("{recap}", recap or "(sin recap disponible)").replace("{context}", context or "(sin contexto de engram)")
-    output = _run_haiku(prompt, chunk="").strip()
+    prompt = EXEC_PROMPT.replace("{recap}", recap or "(no recap available)").replace("{context}", context or "(no engram context)")
+    output = _run_llm(prompt, chunk="").strip()
     if not output:
         return 0
 
