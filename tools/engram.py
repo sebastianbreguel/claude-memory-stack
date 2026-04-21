@@ -878,9 +878,45 @@ def _verify_install(_args: argparse.Namespace) -> int:
     return 1
 
 
+def _fm_name(path: Path) -> str | None:
+    """Parse `name:` from YAML frontmatter (first --- block). Cheap, no yaml dep."""
+    try:
+        with path.open(encoding="utf-8") as fh:
+            if fh.readline().strip() != "---":
+                return None
+            for line in fh:
+                if line.strip() == "---":
+                    return None
+                if line.startswith("name:"):
+                    return line.split(":", 1)[1].strip().strip("\"'")
+    except Exception:
+        return None
+    return None
+
+
+def _installed_agents_skills() -> dict[str, set[str]]:
+    """Enumerate installed agents + skills. Plugin-bundled entries are prefixed
+    with `<plugin_id>:` to match the JSONL bucket naming."""
+    home = Path.home() / ".claude"
+    out: dict[str, set[str]] = {"agent": set(), "skill": set()}
+    for f in (home / "agents").glob("*.md"):
+        out["agent"].add(_fm_name(f) or f.stem)
+    for sf in (home / "skills").glob("*/SKILL.md"):
+        out["skill"].add(_fm_name(sf) or sf.parent.name)
+    # Plugin-bundled: ~/.claude/plugins/cache/<plugin>/<plugin>/<ver>/(agents|skills)
+    for plugin_dir in (home / "plugins" / "cache").glob("*/*/*"):
+        plugin_id = plugin_dir.parent.name
+        for f in (plugin_dir / "agents").glob("*.md"):
+            out["agent"].add(f"{plugin_id}:{_fm_name(f) or f.stem}")
+        for sf in (plugin_dir / "skills").glob("*/SKILL.md"):
+            out["skill"].add(f"{plugin_id}:{_fm_name(sf) or sf.parent.name}")
+    return out
+
+
 def _usage(_args: argparse.Namespace) -> int:
-    """Count agent/skill/plugin invocations across all session JSONLs.
-    Passive readout: table sorted by last_used asc (stalest first). No recommender."""
+    """Count agent/skill/plugin invocations across all session JSONLs, joined
+    against installed agents + skills on disk. Never-invoked items appear with
+    count=0 at the top. Passive readout, no recommender."""
     from collections import defaultdict
 
     root = Path.home() / ".claude" / "projects"
@@ -920,13 +956,17 @@ def _usage(_args: argparse.Namespace) -> int:
                             b[1] = ts
         except Exception:
             continue
+    # Left-join: every installed agent/skill becomes a row, count=0 if never invoked.
+    for typ, names in _installed_agents_skills().items():
+        for name in names:
+            buckets.setdefault((typ, name), [0, ""])
     if not buckets:
-        print("No agent/skill/plugin invocations found.")
+        print("No agent/skill/plugin invocations or installs found.")
         return 0
     rows = sorted(buckets.items(), key=lambda kv: kv[1][1] or "")
     print(f"{'type':<7} {'name':<50} {'count':>6}  last_used")
     for (t, n), (cnt, last) in rows:
-        print(f"{t:<7} {n[:50]:<50} {cnt:>6}  {last[:10] or '<unknown>'}")
+        print(f"{t:<7} {n[:50]:<50} {cnt:>6}  {last[:10] or 'never'}")
     return 0
 
 

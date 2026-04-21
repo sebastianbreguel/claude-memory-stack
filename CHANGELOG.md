@@ -9,7 +9,7 @@
 - `/memclean` skill (merged into `/reflect`). Delete `~/.claude/skills/memclean/` manually if present from an older install.
 
 ### Added
-- `engram usage`: scrape all session JSONLs, count agent/skill/plugin invocations, print table sorted by `last_used` asc (stalest first). Passive readout — no thresholds, no recommender. Human eyeballs the table, decides what to prune from `~/.claude/agents/`, `~/.claude/skills/`, `~/.claude/plugins/`.
+- `engram usage`: scrape all session JSONLs, count agent/skill/plugin invocations, **left-joined against installed agents + skills on disk** (`~/.claude/agents/*.md`, `~/.claude/skills/*/SKILL.md`, and plugin-bundled `~/.claude/plugins/cache/<id>/<id>/<ver>/{agents,skills}/*`). Frontmatter `name:` is the join key; plugin-bundled entries are prefixed `<plugin_id>:<name>` to match JSONL bucket naming. Never-invoked rows show `count=0  last_used=never` at the top. Plugins are invoked-only (MCP server id ≠ plugin id — matching unreliable). Passive readout, no recommender.
 - `engram --version` top-level flag and `engram verify-install` subcommand: SHA256-compares `tools/*.py` in the repo against `~/.claude/tools/` and flags drift, missing files, or sync. Catches "forgot to re-run install.sh" silently breaking behavior.
 - **SessionStart banner surfaces friction**: when memdoctor detects active signals (correction-heavy, error-loop, etc.) for the current project, banner appends `friction: <signal>(Nx), ... (run: engram doctor)`. Top 2 signals, ranked by count.
 - `engram forget --expired`: delete ephemeral memories older than 7 days.
