@@ -16,7 +16,7 @@ Preview behavior (when viewport ≠ 1920×800):
 - **Click anywhere** to replay.
 - **Resize** the window to re-fit.
 
-At exact 1920×1080 (the render target), the stage locks and plays once — that's the HyperFrames capture path.
+At exact 1920×800 (the render target), the stage locks and plays once — that's the HyperFrames capture path.
 
 ## Render to video (HyperFrames)
 
