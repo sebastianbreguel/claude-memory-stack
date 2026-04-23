@@ -1,6 +1,6 @@
 # claude-engram — demo animations
 
-Five HyperFrames-ready compositions (1920×1080, 30fps, GSAP) that showcase the core engram features. Each is a standalone `.html` file with a `data-composition-id` for the HyperFrames renderer and a built-in fallback preview mode.
+Five HyperFrames-ready compositions (1920×800, 30fps, GSAP) that showcase the core engram features. Each is a standalone `.html` file with a `data-composition-id` for the HyperFrames renderer and a built-in fallback preview mode.
 
 ## Preview locally
 
@@ -10,8 +10,8 @@ Any of the files works directly in a browser — no build step, no server needed
 open demo/session-flow.html        # or any other .html
 ```
 
-Preview behavior (when viewport ≠ 1920×1080):
-- Auto-scales the 1920×1080 stage to fit the window.
+Preview behavior (when viewport ≠ 1920×800):
+- Auto-scales and centers the 1920×800 stage to fit the window.
 - Auto-replays the timeline on page load.
 - **Click anywhere** to replay.
 - **Resize** the window to re-fit.

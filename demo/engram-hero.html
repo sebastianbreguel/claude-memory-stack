@@ -832,10 +832,15 @@
     /* preview helpers */
     function fitStage() {
       const stage = document.getElementById('stage');
-      const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+      const stageWidth = 1920;
+      const stageHeight = 800;
+      const scale = Math.min(window.innerWidth / stageWidth, window.innerHeight / stageHeight);
+      stage.style.position = 'absolute';
+      stage.style.left = `${(window.innerWidth - stageWidth * scale) / 2}px`;
+      stage.style.top = `${(window.innerHeight - stageHeight * scale) / 2}px`;
       stage.style.transform = `scale(${scale})`;
     }
-    const isPreview = window.innerWidth !== 1920 || window.innerHeight !== 1080;
+    const isPreview = window.innerWidth !== 1920 || window.innerHeight !== 800;
     if (isPreview) {
       document.body.classList.add('preview');
       fitStage();
