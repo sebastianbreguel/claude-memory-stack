@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>claude-engram readme hero proposal - install</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <style>
+    :root {
+      --bg: #0c0e12;
+      --panel: #10151c;
+      --fg: #d7dbe0;
+      --dim: #6b7280;
+      --muted: #9aa3ad;
+      --accent: #7ee787;
+      --claude: #ff9161;
+      --blue: #79c0ff;
+      --yellow: #e3b341;
+      --divider: #1f242c;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    }
+    .stage {
+      position: relative;
+      width: 1920px;
+      height: 800px;
+      overflow: hidden;
+      background: var(--bg);
+      transform-origin: top left;
+    }
+    .scene {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-columns: 0.95fr 1.05fr;
+      gap: 58px;
+      align-items: center;
+      box-sizing: border-box;
+      padding: 76px 100px;
+    }
+    .pitch {
+      display: flex;
+      flex-direction: column;
+      gap: 26px;
+    }
+    .logo {
+      color: var(--claude);
+      font-size: 72px;
+      line-height: 0.92;
+      white-space: pre;
+    }
+    .title {
+      font-size: 62px;
+      line-height: 1.04;
+      font-weight: 800;
+      color: var(--fg);
+      display: flex;
+      flex-direction: column;
+    }
+    .title .accent { color: var(--accent); }
+    .sub {
+      color: var(--muted);
+      font-size: 29px;
+      line-height: 1.35;
+      max-width: 720px;
+    }
+    .facts {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .fact {
+      color: var(--muted);
+      border: 1px solid var(--divider);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 21px;
+      background: rgba(255,255,255,0.025);
+    }
+    .fact strong { color: var(--accent); }
+    .terminal {
+      border: 1px solid var(--divider);
+      border-radius: 8px;
+      background: linear-gradient(180deg, var(--panel), #0b0f14);
+      min-height: 560px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 28px 80px rgba(0,0,0,0.45);
+    }
+    .chrome {
+      height: 56px;
+      border-bottom: 1px solid var(--divider);
+      display: flex;
+      align-items: center;
+      padding: 0 22px;
+      gap: 12px;
+      color: var(--dim);
+      font-size: 17px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .body {
+      padding: 34px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      font-size: 26px;
+      line-height: 1.4;
+    }
+    .cmdline .prompt { color: var(--blue); }
+    .cmdline .cmd { color: var(--fg); font-weight: 700; }
+    .line { color: var(--muted); }
+    .line .ok,
+    .line .key { color: var(--accent); font-weight: 700; }
+    .line .path { color: var(--blue); }
+    .summary {
+      margin-top: 12px;
+      border-top: 1px solid var(--divider);
+      padding-top: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+    }
+    .bullet {
+      display: grid;
+      grid-template-columns: 128px 1fr;
+      gap: 16px;
+    }
+    .bullet .label {
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .cta {
+      margin-top: auto;
+      display: inline-flex;
+      width: fit-content;
+      color: var(--fg);
+      background: rgba(126,231,135,0.08);
+      border: 1px solid rgba(126,231,135,0.35);
+      border-radius: 6px;
+      padding: 14px 20px;
+      font-size: 25px;
+    }
+    .cta .prompt { color: var(--claude); margin-right: 12px; }
+  </style>
+</head>
+<body>
+  <div id="stage" class="stage" data-composition-id="readme-hero-install" data-width="1920" data-height="800" data-duration="9" data-fps="30" style="width:1920px;height:800px;">
+    <section class="scene clip" data-start="0" data-duration="9" data-track-index="0">
+      <div class="pitch" id="pitch">
+        <div class="logo"> ▐▛███▜▌
+▝▜█████▛▘
+  ▘▘ ▝▝</div>
+        <div class="title"><span>Install once.</span><span class="accent">Every session remembers.</span></div>
+        <div class="sub">claude-engram captures project handoffs in the background and injects a tiny executive summary on startup.</div>
+        <div class="facts">
+          <span class="fact"><strong>~350</strong> ambient tokens</span>
+          <span class="fact">no Docker</span>
+          <span class="fact">no API keys</span>
+          <span class="fact">no MCP</span>
+        </div>
+        <div class="cta" id="cta"><span class="prompt">&gt;</span>/plugin install claude-engram</div>
+      </div>
+      <div class="terminal" id="terminal">
+        <div class="chrome"><span class="dot"></span><span>next Claude Code launch</span></div>
+        <div class="body">
+          <div class="cmdline" id="cmd1"><span class="prompt">~/p/claude-engram | main ?3</span> <span class="cmd">claude</span></div>
+          <div class="line" id="ln1"><span class="ok">engram</span> loaded <span class="path">claude-engram</span> handoff</div>
+          <div class="line" id="ln2">49 sessions - 196 memories - <span class="key">zero startup delay</span></div>
+          <div class="summary" id="summary">
+            <div class="bullet"><span class="label">status</span><span>Tier 1 complete, tests green</span></div>
+            <div class="bullet"><span class="label">last</span><span>memdoctor signal tests landed</span></div>
+            <div class="bullet"><span class="label">next</span><span>triage eval/ and start Tier 2</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
+    tl.from("#pitch > *", { y: 24, duration: 0.5, stagger: 0.12 }, 0.1);
+    tl.from("#terminal", { x: 38, duration: 0.55 }, 0.8);
+    tl.from("#cmd1", { y: 12, opacity: 0, duration: 0.32 }, 1.45);
+    tl.from("#ln1", { x: -16, opacity: 0, duration: 0.32 }, 1.95);
+    tl.from("#ln2", { x: -16, opacity: 0, duration: 0.32 }, 2.25);
+    tl.from("#summary > *", { x: -16, opacity: 0, duration: 0.3, stagger: 0.16 }, 2.75);
+    tl.fromTo("#cta", { filter: "brightness(1)" }, { filter: "brightness(1.5)", duration: 0.4, yoyo: true, repeat: 4 }, 4.4);
+    tl.fromTo("#terminal", { filter: "brightness(1)" }, { filter: "brightness(1.18)", duration: 0.45, yoyo: true, repeat: 2 }, 5.8);
+    window.__timelines = window.__timelines || {};
+    window.__timelines["readme-hero-install"] = tl;
+    function fitStage() {
+      const stage = document.getElementById("stage");
+      const stageWidth = 1920;
+      const stageHeight = 800;
+      const scale = Math.min(window.innerWidth / stageWidth, window.innerHeight / stageHeight);
+      stage.style.position = "absolute";
+      stage.style.left = `${(window.innerWidth - stageWidth * scale) / 2}px`;
+      stage.style.top = `${(window.innerHeight - stageHeight * scale) / 2}px`;
+      stage.style.transform = `scale(${scale})`;
+    }
+    const isPreview = window.innerWidth !== 1920 || window.innerHeight !== 800;
+    if (isPreview) {
+      fitStage();
+      window.addEventListener("resize", fitStage);
+      window.addEventListener("load", () => tl.restart());
+      document.addEventListener("click", () => tl.restart());
+    }
+  </script>
+</body>
+</html>

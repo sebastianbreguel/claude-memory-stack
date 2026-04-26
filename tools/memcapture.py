@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -32,6 +33,18 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
+
+DECAY_HALF_LIFE_DAYS = 21.0
+DECAY_FLOOR = 0.1
+REINFORCEMENT_SATURATE = 4.0
+
+
+def _exp_decay_sql(days: float | None, half_life: float) -> float:
+    if days is None or half_life <= 0:
+        return 0.0
+    score = math.pow(0.5, max(0.0, days) / half_life)
+    return score if score >= DECAY_FLOOR else 0.0
+
 
 DB_PATH = Path.home() / ".claude" / "memory.db"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -77,6 +90,7 @@ class MemoryDB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
+        self.conn.create_function("exp_decay", 2, _exp_decay_sql)
         self._create_tables()
         self._migrate()
 
@@ -139,7 +153,8 @@ class MemoryDB:
                 durability TEXT NOT NULL CHECK(durability IN ('durable', 'ephemeral')),
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 last_accessed TEXT NOT NULL DEFAULT (datetime('now')),
-                source_session TEXT
+                source_session TEXT,
+                exposure_count INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_memories_durability ON memories(durability);
             CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed DESC);
@@ -175,6 +190,13 @@ class MemoryDB:
         if version < 1:
             # v1 sentinel: current schema is the baseline. No data changes.
             self.conn.execute("PRAGMA user_version = 1")
+            self.conn.commit()
+
+        if version < 2:
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(memories)").fetchall()}
+            if "exposure_count" not in cols:
+                self.conn.execute("ALTER TABLE memories ADD COLUMN exposure_count INTEGER NOT NULL DEFAULT 0")
+            self.conn.execute("PRAGMA user_version = 2")
             self.conn.commit()
 
     def _content_hash(self, content: str) -> str:
@@ -411,17 +433,25 @@ class MemoryDB:
                          WHEN m.durability = 'durable' THEN 1
                          WHEN s.project LIKE ? ESCAPE '\\' THEN 1
                          ELSE 0
-                       END AS keep_priority
+                       END AS keep_priority,
+                       exp_decay(julianday('now') - julianday(m.last_accessed), ?)
+                       + MIN(CAST(m.exposure_count AS REAL) / ?, 1.0) AS score
                 FROM memories m
                 LEFT JOIN sessions s ON m.source_session = s.session_id
-                ORDER BY keep_priority DESC, m.last_accessed DESC
+                ORDER BY keep_priority DESC, score DESC
                 LIMIT 100
                 """,
-                (f"%{_like_escape(project)}%",),
+                (f"%{_like_escape(project)}%", DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT topic, content, durability, last_accessed FROM memories ORDER BY last_accessed DESC LIMIT 100"
+                """SELECT topic, content, durability, last_accessed,
+                       exp_decay(julianday('now') - julianday(last_accessed), ?)
+                       + MIN(CAST(exposure_count AS REAL) / ?, 1.0) AS score
+                FROM memories
+                ORDER BY score DESC
+                LIMIT 100""",
+                (DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE),
             ).fetchall()
 
         if not rows:
@@ -484,7 +514,7 @@ class MemoryDB:
             if kept_topics:
                 placeholders = ",".join("?" * len(kept_topics))
                 self.conn.execute(
-                    f"UPDATE memories SET last_accessed = datetime('now') WHERE topic IN ({placeholders})",
+                    f"UPDATE memories SET last_accessed = datetime('now'), exposure_count = exposure_count + 1 WHERE topic IN ({placeholders})",
                     kept_topics,
                 )
                 self.conn.commit()

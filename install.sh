@@ -22,6 +22,7 @@ echo "[1/4] Creating directories..."
 mkdir -p "$CLAUDE_DIR/tools"
 mkdir -p "$CLAUDE_DIR/skills/reflect"
 mkdir -p "$CLAUDE_DIR/skills/patterns"
+mkdir -p "$CLAUDE_DIR/skills/usage"
 
 echo "[2/4] Installing files..."
 
@@ -37,8 +38,10 @@ echo "  -> tools/memdoctor.py (friction signal detector)"
 
 cp "$SCRIPT_DIR/skills/reflect/SKILL.md" "$CLAUDE_DIR/skills/reflect/SKILL.md"
 cp "$SCRIPT_DIR/skills/patterns/SKILL.md" "$CLAUDE_DIR/skills/patterns/SKILL.md"
+cp "$SCRIPT_DIR/skills/usage/SKILL.md" "$CLAUDE_DIR/skills/usage/SKILL.md"
 echo "  -> skills/reflect/SKILL.md (memory consolidation + rule proposals)"
 echo "  -> skills/patterns/SKILL.md (pattern explorer)"
+echo "  -> skills/usage/SKILL.md (agent/skill/plugin invocation stats)"
 
 echo "[3/4] Configuring hooks..."
 

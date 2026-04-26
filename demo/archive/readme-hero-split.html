@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>claude-engram readme hero proposal - split</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <style>
+    :root {
+      --bg: #0c0e12;
+      --panel: #0f131a;
+      --fg: #d7dbe0;
+      --dim: #6b7280;
+      --muted: #9aa3ad;
+      --accent: #7ee787;
+      --claude: #ff9161;
+      --blue: #79c0ff;
+      --yellow: #e3b341;
+      --magenta: #c57bdb;
+      --divider: #1f242c;
+      --red: #ff8183;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    }
+    .stage {
+      position: relative;
+      width: 1920px;
+      height: 800px;
+      overflow: hidden;
+      background: var(--bg);
+      transform-origin: top left;
+    }
+    .scene {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+      padding: 58px 70px 52px;
+      gap: 26px;
+    }
+    .headline {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 27px;
+    }
+    .headline strong {
+      color: var(--fg);
+      font-size: 42px;
+    }
+    .headline .accent { color: var(--accent); }
+    .comparison {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 34px;
+      min-height: 0;
+    }
+    .panel {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--divider);
+      border-radius: 8px;
+      background: linear-gradient(180deg, var(--panel), #0b0f14);
+      box-shadow: 0 24px 70px rgba(0,0,0,0.42);
+      overflow: hidden;
+    }
+    .panel.bad { border-color: rgba(255,129,131,0.35); }
+    .panel.good { border-color: rgba(126,231,135,0.42); }
+    .chrome {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      border-bottom: 1px solid var(--divider);
+      padding: 0 22px;
+      color: var(--dim);
+      font-size: 17px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--red);
+    }
+    .good .dot { background: var(--accent); }
+    .body {
+      flex: 1;
+      padding: 30px 26px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      box-sizing: border-box;
+    }
+    .prompt {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      font-size: 24px;
+    }
+    .path { color: var(--blue); }
+    .dirty { color: var(--yellow); }
+    .cmd { color: var(--fg); font-weight: 700; }
+    .logo-row {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+    .logo {
+      color: var(--claude);
+      font-size: 23px;
+      line-height: 0.96;
+      white-space: pre;
+    }
+    .product {
+      color: var(--fg);
+      font-size: 25px;
+      font-weight: 700;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 19px;
+      margin-top: 7px;
+    }
+    .question {
+      margin-top: auto;
+      border-top: 1px solid var(--divider);
+      padding-top: 22px;
+      font-size: 25px;
+    }
+    .reply {
+      min-height: 96px;
+      font-size: 24px;
+      line-height: 1.45;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .bad .reply strong { color: var(--red); }
+    .good .reply strong,
+    .good .kw,
+    .good .label { color: var(--accent); }
+    .memory {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 23px;
+    }
+    .stats { color: var(--muted); }
+    .project { color: var(--blue); }
+    .bullet {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 16px;
+    }
+    .caption {
+      text-align: center;
+      color: var(--muted);
+      font-size: 30px;
+    }
+    .caption strong { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div id="stage" class="stage" data-composition-id="readme-hero-split" data-width="1920" data-height="800" data-duration="10" data-fps="30" style="width:1920px;height:800px;">
+    <section class="scene clip" data-start="0" data-duration="10" data-track-index="0">
+      <div class="headline" id="headline">
+        <strong>Same project. Fresh shell.</strong>
+        <span>One starts from zero. <span class="accent">One starts with context.</span></span>
+      </div>
+      <div class="comparison">
+        <div class="panel bad" id="bad">
+          <div class="chrome"><span class="dot"></span><span>without engram</span></div>
+          <div class="body">
+            <div class="prompt"><span class="path">~/p/claude-engram</span><span>|</span><span>main</span><span class="dirty">?2</span><span class="cmd">claude</span></div>
+            <div class="logo-row">
+              <div class="logo"> ▐▛███▜▌
+▝▜█████▛▘
+  ▘▘ ▝▝</div>
+              <div><div class="product">Claude Code v2.1.112</div><div class="meta">fresh session - no project handoff</div></div>
+            </div>
+            <div class="question" id="bad-q">&gt; where were we?</div>
+            <div class="reply" id="bad-reply"><strong>I do not know yet.</strong><span>Paste the previous context or point me at the files.</span></div>
+          </div>
+        </div>
+        <div class="panel good" id="good">
+          <div class="chrome"><span class="dot"></span><span>with claude-engram</span></div>
+          <div class="body">
+            <div class="prompt"><span class="path">~/p/claude-engram</span><span>|</span><span>main</span><span class="dirty">?2</span><span class="cmd">claude</span></div>
+            <div class="logo-row">
+              <div class="logo"> ▐▛███▜▌
+▝▜█████▛▘
+  ▘▘ ▝▝</div>
+              <div><div class="product">SessionStart injects the handoff</div><div class="meta">cached per project - no startup delay</div></div>
+            </div>
+            <div class="memory" id="memory">
+              <div class="stats"><span class="kw">engram</span> <span class="project">claude-engram</span> - 196 memories</div>
+              <div class="bullet"><span class="label">status</span><span>106 tests passing</span></div>
+              <div class="bullet"><span class="label">last</span><span>memdoctor signal tests landed</span></div>
+              <div class="bullet"><span class="label">next</span><span>triage eval/ before Tier 2</span></div>
+            </div>
+            <div class="question" id="good-q">&gt; where were we?</div>
+            <div class="reply" id="good-reply"><strong>Tier 2 is next.</strong><span>You left off after landing memdoctor tests.</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="caption" id="caption">claude-engram turns every new session into a <strong>warm start</strong>.</div>
+    </section>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
+    tl.from("#headline", { y: 18, duration: 0.45 }, 0.1);
+    tl.from("#bad", { x: -34, duration: 0.55 }, 0.45);
+    tl.from("#good", { x: 34, duration: 0.55 }, 0.75);
+    tl.from("#bad .logo-row", { y: 18, opacity: 0, duration: 0.4 }, 1.15);
+    tl.from("#good .logo-row", { y: 18, opacity: 0, duration: 0.4 }, 1.35);
+    tl.from("#memory > *", { x: -16, opacity: 0, duration: 0.28, stagger: 0.15 }, 2.0);
+    tl.from("#bad-q", { y: 12, opacity: 0, duration: 0.3 }, 3.1);
+    tl.from("#bad-reply", { y: 12, opacity: 0, duration: 0.35 }, 3.45);
+    tl.from("#good-q", { y: 12, opacity: 0, duration: 0.3 }, 4.25);
+    tl.from("#good-reply", { y: 12, opacity: 0, duration: 0.35 }, 4.6);
+    tl.from("#caption", { y: 16, opacity: 0, duration: 0.45 }, 5.3);
+    tl.fromTo("#good", { filter: "brightness(1)" }, { filter: "brightness(1.24)", duration: 0.45, yoyo: true, repeat: 3 }, 5.7);
+    window.__timelines = window.__timelines || {};
+    window.__timelines["readme-hero-split"] = tl;
+    function fitStage() {
+      const stage = document.getElementById("stage");
+      const stageWidth = 1920;
+      const stageHeight = 800;
+      const scale = Math.min(window.innerWidth / stageWidth, window.innerHeight / stageHeight);
+      stage.style.position = "absolute";
+      stage.style.left = `${(window.innerWidth - stageWidth * scale) / 2}px`;
+      stage.style.top = `${(window.innerHeight - stageHeight * scale) / 2}px`;
+      stage.style.transform = `scale(${scale})`;
+    }
+    const isPreview = window.innerWidth !== 1920 || window.innerHeight !== 800;
+    if (isPreview) {
+      fitStage();
+      window.addEventListener("resize", fitStage);
+      window.addEventListener("load", () => tl.restart());
+      document.addEventListener("click", () => tl.restart());
+    }
+  </script>
+</body>
+</html>

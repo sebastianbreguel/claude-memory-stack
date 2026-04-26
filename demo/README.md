@@ -1,6 +1,14 @@
 # claude-engram — demo animations
 
-Five HyperFrames-ready compositions (1920×800, 30fps, GSAP) that showcase the core engram features. Each is a standalone `.html` file with a `data-composition-id` for the HyperFrames renderer and a built-in fallback preview mode.
+Six HyperFrames-ready compositions (1920×800, 30fps, GSAP) that showcase claude-engram from different angles. Each is a standalone `.html` file with a `data-composition-id` for the HyperFrames renderer and a built-in fallback preview mode.
+
+## README hero proposals
+
+| file | duration | output | best use |
+|---|---:|---|---|
+| `readme-hero-focus.html` | 9s | `readme-hero-focus.gif` | **Selected for README.** Fastest "warm start" payoff in a single terminal. |
+| `readme-hero-split.html` | 10s | `readme-hero-split.gif` | Strong before/after comparison: fresh shell with and without engram. |
+| `readme-hero-install.html` | 9s | `readme-hero-install.gif` | Install-first pitch for launch posts or docs sections. |
 
 ## Preview locally
 
@@ -22,25 +30,35 @@ At exact 1920×800 (the render target), the stage locks and plays once — that'
 
 Each stage carries `data-composition-id`, `data-width`, `data-height`, `data-duration`, `data-fps`. Clips inside expose `data-start`, `data-duration`, `data-track-index` so the renderer can assemble tracks without parsing the GSAP timeline. Point your HyperFrames pipeline at the file — no extra config.
 
-## The five beats
+## Render GIFs
+
+The repo includes a local renderer for README GIF assets. It follows the HyperFrames quickstart requirements: Node.js 22+, FFmpeg, and a browser capture path.
+
+```bash
+node demo/render-gifs.mjs readme-hero-focus readme-hero-split readme-hero-install
+```
+
+Set `CHROME_PATH` if Chrome is not at `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`.
+
+## Existing beats
 
 | file | duration | composition id | what it shows | engram feature |
 |---|---|---|---|---|
+| `readme-hero-focus.html` | 9s | `readme-hero-focus` | Single-terminal warm start: SessionStart injects status, last, next, then answers "where were we?" | README conversion hero |
+| `readme-hero-split.html` | 10s | `readme-hero-split` | Side-by-side fresh shell: no context vs claude-engram handoff | Before/after proof |
+| `readme-hero-install.html` | 9s | `readme-hero-install` | Install message plus next-launch terminal showing immediate context | Launch / install pitch |
+| `engram-hero.html` | 23s | `engram-hero` | Longer narrative: day 1 capture, next-day split, close card | Full story hero |
 | `session-flow.html` | 11s | `engram-session-flow` | Session 1 → "2 hours later…" → Session 2 loads with the `last:` bullet pulsing to show continuity | 3-bullet executive injected at SessionStart |
-| `globals-beat.html` | 5s | `engram-globals-beat` | SessionStart banner with "196 memories" callout exposing USER / FEEDBACK / PROJECT / REFERENCE entries | Global auto-memory, 4 memory types |
-| `patterns-beat.html` | 5s | `engram-patterns-beat` | Banner + memdoctor panel firing `rapid-corrections` and `restart-cluster` signals, suggesting `/debug` | memdoctor signals (correction-heavy, rapid-corrections, restart-cluster, error-loop, keep-going-loop) |
-| `precompact-beat.html` | 6s | `engram-precompact-beat` | Conversation hits 93% context → `PreCompact:compact intercepted` → executive saved to `~/.claude/engram/executive/claude-engram.md` | PreCompact hook, per-cwd executive cache |
-| `scale-beat.html` | 5s | `engram-scale-beat` | 3-panel realistic chrome showing scale/usage story | (scale narrative) |
+| `scale-beat.html` | 10s | `engram-scale-beat` | 3-panel realistic chrome showing per-project memory at scale | Scale narrative |
 
 ## Recommended use order
 
 For a cold-pitch walkthrough (landing page, README, or video reel), play in this order:
 
-1. **`session-flow.html`** — the problem + payoff (Claude remembers where you left off).
-2. **`precompact-beat.html`** — the rescue moment (context saved before compaction wipes it).
-3. **`globals-beat.html`** — the cross-project angle (memories travel with you).
-4. **`patterns-beat.html`** — the intelligence layer (memdoctor catches you when you're spiraling).
-5. **`scale-beat.html`** — the "this works at scale" close.
+1. **`readme-hero-focus.html`** — the first README impression.
+2. **`readme-hero-split.html`** — the clearest before/after proof.
+3. **`session-flow.html`** — the mechanical flow behind the payoff.
+4. **`scale-beat.html`** — the "this works across projects" close.
 
 Each beat is designed to stand alone, so you can also drop a single one into a tweet, a docs section, or a slide.
 

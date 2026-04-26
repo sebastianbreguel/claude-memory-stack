@@ -43,8 +43,8 @@ def test_capture_transcript_exits_zero(tmp_home):
     assert result.returncode == 0, f"capture failed: {result.stderr}"
 
 
-def test_schema_user_version_is_1(tmp_home):
-    """PRAGMA user_version is stamped to 1 after any capture (v1 baseline).
+def test_schema_user_version_is_2(tmp_home):
+    """PRAGMA user_version is stamped to 2 after any capture (v2 baseline).
 
     Future schema changes must bump this in `_migrate` and gate their ALTERs
     behind `if version < N:` blocks. This test locks the baseline.
@@ -59,7 +59,7 @@ def test_schema_user_version_is_1(tmp_home):
         version = conn.execute("PRAGMA user_version").fetchone()[0]
     finally:
         conn.close()
-    assert version == 1, f"expected user_version=1, got {version}"
+    assert version == 2, f"expected user_version=2, got {version}"
 
 
 def test_capture_then_stats_reports_activity(tmp_home):
