@@ -4,7 +4,7 @@
 
 claude-engram fixes that. **~350 ambient tokens. No Docker, no API keys, no MCP.**
 
-![engram demo](demo/engram-hero.gif)
+![claude-engram warm start demo](demo/readme-hero-focus.gif)
 
 ## What you see
 
@@ -14,24 +14,9 @@ When you open Claude Code, claude-engram injects a 3-bullet executive summary fr
 - status: claude-engram MVP+D2 completo, 79 tests passing
 - last change: D2 error-loop enrichment con memory.db cross-reference
 - next: fix install.sh memdoctor → translate EXEC_PROMPT → docs
-friction: correction-heavy(4x), error-loop(2x) (run: engram doctor)
 ```
 
-Three bullets, zero latency. The merge (recap + memory + patterns) happens in the background *between* sessions, so opening is instant. The optional `friction:` line surfaces when `memdoctor` detects active signals for the current project.
-
-## How it works
-
-![session flow](demo/session-flow.gif)
-
-claude-engram has two jobs: **remember** and **inject**.
-
-1. **While you work** — two triggers capture state:
-   - **Every 25 prompts** (UserPromptSubmit) — mid-session digest fires a background LLM pass to update memories.
-   - **On compaction** (PreCompact) — transcript → SQLite; digest + snapshot + pattern wiki refresh; executive summary rebuild.
-2. **Between sessions** — Sonnet merges Claude Code's own `※ recap` with engram's memories/patterns into a 3-bullet executive summary, cached per project.
-3. **On session start** — the cached executive is injected (zero latency). Falls back to ~350-token inject if the cache is missing.
-
-That's the core. No config, no commands to run. It works while you work.
+Three bullets, zero latency. The merge (recap + memory + patterns) happens in the background *between* sessions, so opening is instant.
 
 ## What it remembers
 
@@ -42,6 +27,18 @@ That's the core. No config, no commands to run. It works while you work.
 | **Patterns** | How you actually work | *files always edited together, recurring errors* | Updated on each session |
 
 Handoffs and preferences are the core — they inject automatically on every session start. Patterns are a bonus: an Obsidian-compatible wiki in `~/.claude/patterns/` that detects file co-edits, recurring errors, and tool habits from your history. Browse it, ignore it, or use `/patterns` inside Claude Code to explore.
+
+## How it works
+
+claude-engram has two jobs: **remember** and **inject**.
+
+1. **While you work** — two triggers capture state:
+   - **Every 25 prompts** (UserPromptSubmit) — mid-session digest fires a background LLM pass to update memories.
+   - **On compaction** (PreCompact) — transcript → SQLite; digest + snapshot + pattern wiki refresh; executive summary rebuild.
+2. **Between sessions** — Sonnet merges Claude Code's own `※ recap` with engram's memories/patterns into a 3-bullet executive summary, cached per project.
+3. **On session start** — the cached executive is injected (zero latency). Falls back to ~350-token inject if the cache is missing.
+
+That's the core. No config, no commands to run. It works while you work.
 
 ## Install
 
@@ -60,6 +57,9 @@ Handoffs and preferences are the core — they inject automatically on every ses
 git clone https://github.com/sebastianbreguel/claude-engram.git
 cd claude-engram && ./install.sh
 ```
+
+> **First session:** claude-engram captures silently — nothing visible yet.
+> **Session 2 onward:** the 3-bullet recap appears at the top of the conversation.
 
 ```bash
 # Uninstall (keeps your memory.db data)

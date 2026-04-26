@@ -700,7 +700,14 @@ def _on_executive(args: argparse.Namespace) -> int:
                 os.replace(cache, prev)
             except OSError as e:
                 _log_warning(f"executive: rotate to .prev failed: {e}")
-        cache.write_text(output + "\n", encoding="utf-8")
+        # Atomic write: tmp + rename eliminates partial-file window on crash.
+        tmp = cache.with_suffix(cache.suffix + ".tmp")
+        try:
+            tmp.write_text(output + "\n", encoding="utf-8")
+            os.replace(tmp, cache)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
     except Exception as e:
         _log_warning(f"executive: cache write failed: {e}")
     return 0
@@ -1049,15 +1056,6 @@ def _on_session_start(_args: argparse.Namespace) -> int:
             else:
                 exec_text = executive
             banner = f"{header}\n{exec_text}" if header else exec_text
-
-        # Friction alert: surface memdoctor signals that would otherwise stay
-        # buried until the user runs `engram doctor` manually.
-        try:
-            friction = memdoctor.signals_banner_line(cwd) if cwd else ""
-        except Exception:
-            friction = ""
-        if friction:
-            banner = f"{banner}\n{friction}" if banner else friction
 
     out: dict = {
         "continue": True,

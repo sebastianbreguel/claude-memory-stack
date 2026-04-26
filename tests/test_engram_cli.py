@@ -380,9 +380,10 @@ def test_preview_prev_reports_missing_cleanly(tmp_path, monkeypatch):
     assert "no previous executive summary" in result.stdout
 
 
-def test_session_start_banner_surfaces_friction(tmp_path, monkeypatch):
-    """When memdoctor reports signals for the current cwd, the banner appends
-    a one-liner — the whole point is that users see it without running doctor."""
+def test_session_start_banner_omits_friction(tmp_path, monkeypatch):
+    """Friction line was pulled from the auto-banner pre-launch — surface is too
+    intrusive for an ambient tool. `engram doctor` remains opt-in CLI. Even if
+    memdoctor reports signals, the systemMessage must NOT contain them."""
     import importlib.util
 
     fake_home = tmp_path / "home"
@@ -393,42 +394,14 @@ def test_session_start_banner_surfaces_friction(tmp_path, monkeypatch):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    # Fake a signals report for the current cwd.
+    # Even with a non-empty signal report, banner should not surface it.
     monkeypatch.setattr(mod.memdoctor, "signals_banner_line", lambda cwd, top_n=2: "friction: error-loop(3x) (run: engram doctor)")
 
-    # Drive _on_session_start with a payload that has a cwd.
     import io as _io
 
     payload = _json.dumps({"cwd": str(tmp_path), "session_id": "t"})
     monkeypatch.setattr("sys.stdin", _io.StringIO(payload))
 
-    buf = _io.StringIO()
-    monkeypatch.setattr("sys.stdout", buf)
-    assert mod._on_session_start(None) == 0
-    out = _json.loads(buf.getvalue())
-    assert "friction:" in out.get("systemMessage", "")
-    assert "engram doctor" in out["systemMessage"]
-
-
-def test_session_start_banner_omits_friction_when_none(tmp_path, monkeypatch):
-    """No signals → banner must not contain the friction string. Avoids
-    crying wolf on clean sessions."""
-    import importlib.util
-
-    fake_home = tmp_path / "home"
-    (fake_home / ".claude").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(fake_home))
-
-    spec = importlib.util.spec_from_file_location("engram_mod", ENGRAM)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    monkeypatch.setattr(mod.memdoctor, "signals_banner_line", lambda cwd, top_n=2: "")
-
-    import io as _io
-
-    payload = _json.dumps({"cwd": str(tmp_path), "session_id": "t"})
-    monkeypatch.setattr("sys.stdin", _io.StringIO(payload))
     buf = _io.StringIO()
     monkeypatch.setattr("sys.stdout", buf)
     assert mod._on_session_start(None) == 0

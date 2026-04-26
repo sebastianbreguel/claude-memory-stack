@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>claude-engram readme hero proposal - focus</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <style>
+    :root {
+      --bg: #0c0e12;
+      --panel: #0f131a;
+      --panel-2: #121820;
+      --fg: #d7dbe0;
+      --dim: #6b7280;
+      --muted: #9aa3ad;
+      --accent: #7ee787;
+      --claude: #ff9161;
+      --blue: #79c0ff;
+      --yellow: #e3b341;
+      --magenta: #c57bdb;
+      --divider: #1f242c;
+      --red: #ff8183;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    }
+    .stage {
+      position: relative;
+      width: 1920px;
+      height: 800px;
+      overflow: hidden;
+      background: var(--bg);
+      transform-origin: top left;
+    }
+    .stage::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.014) 1px, transparent 1px);
+      background-size: 64px 64px;
+      opacity: 0.55;
+    }
+    .stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 74% 24%, rgba(126,231,135,0.1), transparent 38%);
+      pointer-events: none;
+    }
+    .scene {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      box-sizing: border-box;
+      padding: 70px 112px 82px;
+      gap: 26px;
+    }
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--dim);
+      font-size: 22px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .topline .state {
+      color: var(--accent);
+    }
+    .terminal {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      height: 560px;
+      border: 1px solid var(--divider);
+      border-radius: 8px;
+      background: linear-gradient(180deg, var(--panel), #0b0f14);
+      box-shadow: 0 28px 80px rgba(0,0,0,0.44);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .chrome {
+      height: 56px;
+      border-bottom: 1px solid var(--divider);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 24px;
+      box-sizing: border-box;
+      color: var(--dim);
+      font-size: 18px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--claude);
+    }
+    .chrome .title {
+      color: var(--muted);
+      margin-right: auto;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .content {
+      flex: 1;
+      padding: 36px 42px 30px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 26px;
+    }
+    .prompt {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      font-size: 30px;
+    }
+    .path { color: var(--blue); }
+    .branch { color: var(--fg); }
+    .dirty { color: var(--yellow); }
+    .cmd { color: var(--fg); font-weight: 600; }
+    .right { margin-left: auto; color: var(--magenta); font-size: 20px; }
+    .banner {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 26px;
+      align-items: start;
+    }
+    .logo {
+      color: var(--claude);
+      font-size: 30px;
+      line-height: 0.96;
+      white-space: pre;
+    }
+    .product {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .product .name {
+      color: var(--fg);
+      font-weight: 700;
+      font-size: 32px;
+    }
+    .product .meta {
+      color: var(--muted);
+      font-size: 23px;
+    }
+    .inject {
+      margin-left: 118px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      font-size: 28px;
+    }
+    .stats {
+      color: var(--muted);
+      font-size: 24px;
+    }
+    .stats .kw,
+    .bullet .label,
+    .highlight {
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .stats .project { color: var(--blue); }
+    .bullet {
+      display: grid;
+      grid-template-columns: 156px 1fr;
+      gap: 22px;
+      color: var(--fg);
+    }
+    .bullet .dash { color: var(--dim); }
+    .ask {
+      margin-top: auto;
+      border-top: 1px solid var(--divider);
+      padding-top: 24px;
+      display: flex;
+      gap: 14px;
+      align-items: baseline;
+      font-size: 29px;
+    }
+    .answer {
+      margin-left: 36px;
+      color: var(--muted);
+      font-size: 27px;
+    }
+    .answer strong { color: var(--fg); }
+    .caption {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 30px;
+      text-align: center;
+      font-size: 30px;
+      color: var(--muted);
+      z-index: 3;
+    }
+    .caption strong { color: var(--accent); }
+    .cur {
+      display: inline-block;
+      width: 13px;
+      height: 30px;
+      background: var(--fg);
+      transform: translateY(4px);
+    }
+  </style>
+</head>
+<body>
+  <div id="stage" class="stage" data-composition-id="readme-hero-focus" data-width="1920" data-height="800" data-duration="9" data-fps="30" style="width:1920px;height:800px;">
+    <section class="scene clip" data-start="0" data-duration="9" data-track-index="0">
+      <div class="topline" id="topline">
+        <span>fresh Claude Code session</span>
+        <span class="state">memory already loaded</span>
+      </div>
+      <div class="terminal" id="terminal">
+        <div class="chrome">
+          <span class="dot"></span>
+          <span class="title">claude-engram</span>
+          <span>~/personal/claude-engram</span>
+        </div>
+        <div class="content">
+          <div class="prompt" id="prompt">
+            <span class="path">~/p/claude-engram</span>
+            <span>|</span>
+            <span class="branch">main</span>
+            <span class="dirty">?3</span>
+            <span class="cmd" id="cmd"></span>
+            <span class="right">INT 10:25:17</span>
+          </div>
+          <div class="banner" id="banner">
+            <div class="logo"> ▐▛███▜▌
+▝▜█████▛▘
+  ▘▘ ▝▝</div>
+            <div class="product">
+              <div class="name">Claude Code starts with yesterday's context</div>
+              <div class="meta">No prompt. No docs recap. No "what were we doing?"</div>
+            </div>
+          </div>
+          <div class="inject" id="inject">
+            <div class="stats"><span class="kw">engram</span> <span class="project">claude-engram</span> - 49 sessions - 196 memories</div>
+            <div class="bullet" id="b1"><span><span class="dash">-</span> <span class="label">status</span></span><span>Tier 1 complete, 106 tests passing</span></div>
+            <div class="bullet" id="b2"><span><span class="dash">-</span> <span class="label">last</span></span><span>memdoctor signal tests landed</span></div>
+            <div class="bullet" id="b3"><span><span class="dash">-</span> <span class="label">next</span></span><span>triage eval/ and start Tier 2</span></div>
+          </div>
+          <div class="ask" id="ask"><span>></span><span id="question"></span><span class="cur"></span></div>
+          <div class="answer" id="answer"><strong>You're at Tier 2.</strong> The last green run was 106 tests. Next step: triage eval/.</div>
+        </div>
+      </div>
+      <div class="caption" id="caption">Open Claude Code. <strong>Your handoff is already there.</strong></div>
+    </section>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
+    function typewriter(id, text, start, duration) {
+      const el = document.getElementById(id);
+      el.textContent = "";
+      const step = duration / Math.max(text.length, 1);
+      text.split("").forEach((char, i) => {
+        tl.call(() => { el.textContent += char; }, [], start + i * step);
+      });
+    }
+    tl.from("#terminal", { y: 28, duration: 0.55 }, 0.15);
+    tl.from("#topline", { y: 16, duration: 0.45 }, 0.25);
+    typewriter("cmd", "claude", 0.45, 0.42);
+    tl.from("#banner", { y: 18, opacity: 0, duration: 0.45 }, 1.05);
+    tl.from("#inject .stats", { x: -18, opacity: 0, duration: 0.35 }, 1.75);
+    tl.from("#b1", { x: -18, opacity: 0, duration: 0.3 }, 2.1);
+    tl.from("#b2", { x: -18, opacity: 0, duration: 0.3 }, 2.35);
+    tl.from("#b3", { x: -18, opacity: 0, duration: 0.3 }, 2.6);
+    tl.from("#caption", { y: 12, opacity: 0, duration: 0.45 }, 3.05);
+    typewriter("question", "where were we?", 4.1, 0.7);
+    tl.from("#answer", { y: 12, opacity: 0, duration: 0.45 }, 5.15);
+    tl.fromTo("#b3", { filter: "brightness(1)" }, { filter: "brightness(1.45)", duration: 0.35, yoyo: true, repeat: 3 }, 5.55);
+    tl.to("#caption strong", { color: "#d7dbe0", duration: 0.25, yoyo: true, repeat: 3 }, 6.0);
+    window.__timelines = window.__timelines || {};
+    window.__timelines["readme-hero-focus"] = tl;
+    function fitStage() {
+      const stage = document.getElementById("stage");
+      const stageWidth = 1920;
+      const stageHeight = 800;
+      const scale = Math.min(window.innerWidth / stageWidth, window.innerHeight / stageHeight);
+      stage.style.position = "absolute";
+      stage.style.left = `${(window.innerWidth - stageWidth * scale) / 2}px`;
+      stage.style.top = `${(window.innerHeight - stageHeight * scale) / 2}px`;
+      stage.style.transform = `scale(${scale})`;
+    }
+    const isPreview = window.innerWidth !== 1920 || window.innerHeight !== 800;
+    if (isPreview) {
+      fitStage();
+      window.addEventListener("resize", fitStage);
+      window.addEventListener("load", () => tl.restart());
+      document.addEventListener("click", () => tl.restart());
+    }
+  </script>
+</body>
+</html>
