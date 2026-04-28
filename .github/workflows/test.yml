@@ -25,3 +25,19 @@ jobs:
 
       - name: Tests
         run: uv run pytest -q
+
+  eval-corrections:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Eval harness smoke (parse + score committed sample)
+        run: |
+          uv run tools/eval_corrections.py --help
+          uv run tools/eval_corrections.py score --in eval/corrections_sample.md
