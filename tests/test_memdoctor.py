@@ -448,3 +448,50 @@ class TestMetaFiltering:
         events = parse_jsonl(path)
         # 3 real corrections of 3 non-meta messages → 100% → should flag
         assert detect_correction_heavy(events) == "correction-heavy"
+
+
+class TestJsonOutput:
+    def _stub_report(self):
+        return {
+            "sessions": 7,
+            "projects": {"/p/a": {"error-loop": 3, "rapid-corrections": 2}, "/p/b": {"correction-heavy": 5}},
+            "totals": {"error-loop": 3, "rapid-corrections": 2, "correction-heavy": 5},
+            "error_samples": [("/p/a", "boom"), ("/p/a", "kaboom")],
+        }
+
+    def test_json_payload_shape(self, monkeypatch):
+        import argparse as _argparse
+
+        import memdoctor
+
+        monkeypatch.setattr(memdoctor, "_analyze", lambda project_filter=None: self._stub_report())
+        ns = _argparse.Namespace(project=None, rules=False, per_project=False, propose=False, json=True)
+        captured = {}
+
+        def fake_print(s):
+            captured["out"] = s
+
+        monkeypatch.setattr("builtins.print", fake_print)
+        rc = memdoctor.run(ns)
+        assert rc == 0
+        payload = json.loads(captured["out"])
+        assert payload["meta"]["sessions_analyzed"] == 7
+        assert payload["totals"]["correction-heavy"] == 5
+        assert payload["projects"]["/p/a"]["total"] == 5
+        assert payload["projects"]["/p/b"]["signals"] == {"correction-heavy": 5}
+        assert payload["error_samples"][0] == {"project": "/p/a", "error": "boom"}
+        assert "rules_markdown" not in payload
+
+    def test_json_with_rules_includes_markdown(self, monkeypatch):
+        import argparse as _argparse
+
+        import memdoctor
+
+        monkeypatch.setattr(memdoctor, "_analyze", lambda project_filter=None: self._stub_report())
+        ns = _argparse.Namespace(project=None, rules=True, per_project=False, propose=False, json=True)
+        captured = {}
+        monkeypatch.setattr("builtins.print", lambda s: captured.setdefault("out", s))
+        memdoctor.run(ns)
+        payload = json.loads(captured["out"])
+        assert isinstance(payload.get("rules_markdown"), str)
+        assert payload["rules_markdown"]  # non-empty when signals exceed threshold

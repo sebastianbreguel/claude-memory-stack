@@ -719,13 +719,43 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=f"propose feedback memories from the most recent session (requires ≥{PROPOSE_MIN_CORRECTIONS} corrections)",
     )
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of human-readable summary")
     return p
+
+
+def _json_payload(report: dict, want_rules: bool) -> dict:
+    sessions = report["sessions"]
+    totals = report["totals"]
+    payload = {
+        "meta": {
+            "sessions_analyzed": sessions,
+            "min_corrections_to_flag": MIN_CORRECTIONS_TO_FLAG,
+        },
+        "totals": totals,
+        "projects": {
+            project: {
+                "signals": dict(sig_counts),
+                "total": sum(sig_counts.values()),
+            }
+            for project, sig_counts in report["projects"].items()
+        },
+        "error_samples": [{"project": proj, "error": err} for proj, err in report.get("error_samples", [])],
+    }
+    if want_rules:
+        detected = {s for s in totals if totals[s] >= MIN_CORRECTIONS_TO_FLAG}
+        payload["rules_markdown"] = format_rules(detected)
+    return payload
 
 
 def run(args: argparse.Namespace) -> int:
     if args.propose:
         return propose_memories(project_filter=args.project)
     report = _analyze(project_filter=args.project)
+    if args.json:
+        import json as _json
+
+        print(_json.dumps(_json_payload(report, want_rules=args.rules), indent=2))
+        return 0
     if args.rules and args.per_project:
         _print_rules_per_project(report)
     elif args.rules:
