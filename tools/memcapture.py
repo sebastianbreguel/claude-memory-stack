@@ -26,6 +26,7 @@ import sqlite3
 import subprocess
 import sys
 from collections import Counter
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar, TextIO
@@ -1084,22 +1085,20 @@ def find_current_session() -> tuple[Path, str] | None:
 
 
 @contextlib.contextmanager
-def _session(db: "MemoryDB | None", out: TextIO | None = None):
+def _session(db: MemoryDB | None, out: TextIO | None = None) -> Iterator[MemoryDB]:
     """Open MemoryDB if not provided; redirect stdout to ``out`` if provided."""
     owns = db is None
     actual = MemoryDB() if owns else db
-    stack = contextlib.ExitStack()
-    if out is not None:
-        stack.enter_context(contextlib.redirect_stdout(out))
+    ctx = contextlib.redirect_stdout(out) if out is not None else contextlib.nullcontext()
     try:
-        with stack:
+        with ctx:
             yield actual
     finally:
         if owns:
             actual.close()
 
 
-def search(query: str, *, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def search(query: str, *, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         results = d.search(query)
         if not results:
@@ -1111,7 +1110,7 @@ def search(query: str, *, db: "MemoryDB | None" = None, out: TextIO | None = Non
     return 0
 
 
-def stats(*, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def stats(*, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         s = d.stats()
         cs = d.compaction_stats()
@@ -1147,7 +1146,7 @@ def stats(*, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
     return 0
 
 
-def recent(n: int, *, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def recent(n: int, *, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         for s in d.recent_sessions(n):
             topic = (s["topic"] or "")[:50]
@@ -1157,13 +1156,13 @@ def recent(n: int, *, db: "MemoryDB | None" = None, out: TextIO | None = None) -
     return 0
 
 
-def inject(project: str | None, *, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def inject(project: str | None, *, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         print(d.inject_context(project))
     return 0
 
 
-def banner(project: str | None, name: str | None, *, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def banner(*, project: str | None, name: str | None, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         print(d.build_banner(project, name))
     return 0
@@ -1174,7 +1173,7 @@ def ingest_digest(
     project: str | None,
     text: str,
     *,
-    db: "MemoryDB | None" = None,
+    db: MemoryDB | None = None,
     out: TextIO | None = None,
 ) -> int:
     with _session(db, out) as d:
@@ -1190,7 +1189,7 @@ def ingest_snapshot(
     project: str | None,
     text: str,
     *,
-    db: "MemoryDB | None" = None,
+    db: MemoryDB | None = None,
     out: TextIO | None = None,
 ) -> int:
     with _session(db, out) as d:
@@ -1202,7 +1201,7 @@ def ingest_snapshot(
     return 0
 
 
-def compactions(filter_str: str, *, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def compactions(filter_str: str, *, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         if filter_str == "*":
             rows = d.conn.execute(
@@ -1223,7 +1222,7 @@ def compactions(filter_str: str, *, db: "MemoryDB | None" = None, out: TextIO | 
     return 0
 
 
-def list_memories(pattern_str: str, *, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def list_memories(pattern_str: str, *, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         pattern = None if pattern_str == "*" else pattern_str.replace("*", "%")
         memories = d.list_memories(pattern)
@@ -1239,7 +1238,7 @@ def list_memories(pattern_str: str, *, db: "MemoryDB | None" = None, out: TextIO
     return 0
 
 
-def forget_topic(topic: str, *, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def forget_topic(topic: str, *, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         if d.forget_memory(topic):
             print(f"Forgot: {topic}")
@@ -1248,7 +1247,7 @@ def forget_topic(topic: str, *, db: "MemoryDB | None" = None, out: TextIO | None
     return 0
 
 
-def forget_all_ephemeral(*, db: "MemoryDB | None" = None, out: TextIO | None = None) -> int:
+def forget_all_ephemeral(*, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
     with _session(db, out) as d:
         count = d.forget_all_ephemeral()
         print(f"Deleted {count} ephemeral memories")
@@ -1260,7 +1259,7 @@ def capture(
     *,
     all_: bool = False,
     extract_facts: bool = False,
-    db: "MemoryDB | None" = None,
+    db: MemoryDB | None = None,
     out: TextIO | None = None,
 ) -> int:
     parser = TranscriptParser()

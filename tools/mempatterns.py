@@ -555,12 +555,8 @@ class PatternsOrchestrator:
         )
 
 
-_DEFAULT_DB = Path.home() / ".claude" / "memory.db"
-_DEFAULT_WIKI = Path.home() / ".claude" / "patterns"
-
-
-def _orch(db_path: Path | None = None, wiki_dir: Path | None = None) -> "PatternsOrchestrator":
-    return PatternsOrchestrator(db_path=db_path or _DEFAULT_DB, wiki_dir=wiki_dir or _DEFAULT_WIKI)
+def _orch(db_path: Path | None = None, wiki_dir: Path | None = None) -> PatternsOrchestrator:
+    return PatternsOrchestrator(db_path=db_path or DB_PATH, wiki_dir=wiki_dir or WIKI_DIR)
 
 
 def update_now(*, db_path: Path | None = None, wiki_dir: Path | None = None) -> int:
@@ -584,7 +580,7 @@ def report_now(*, db_path: Path | None = None, wiki_dir: Path | None = None) -> 
 
 
 def suggestions_now(*, wiki_dir: Path | None = None) -> int:
-    pending = (wiki_dir or _DEFAULT_WIKI) / "suggestions" / "pending.md"
+    pending = (wiki_dir or WIKI_DIR) / "suggestions" / "pending.md"
     print(pending.read_text() if pending.exists() else "No suggestions.")
     return 0
 

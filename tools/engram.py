@@ -5,8 +5,8 @@
 # ///
 """engram — unified CLI for claude-engram.
 
-User subcommands dispatch to the `run(args)` functions exposed by each tool
-module. No sys.argv mutation, no SystemExit catching.
+User subcommands dispatch to kwarg functions exposed by each tool module.
+No sys.argv mutation, no SystemExit catching.
 
 Hook subcommands (`on-precompact`, `on-session-start`) orchestrate the work
 previously done by shell scripts. LLM calls are fire-and-forget subprocesses
@@ -1032,8 +1032,8 @@ def _on_session_start(_args: argparse.Namespace) -> int:
         display_name = Path(cwd).name if cwd else ""
         try:
             memcapture.banner(
-                project_key or None,
-                display_name or None,
+                project=project_key or None,
+                name=display_name or None,
                 out=buf2,
                 db=shared_db,
             )
@@ -1086,12 +1086,12 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("digest", help="ingest LLM digest from stdin")
     d.add_argument("--session-id", dest="session_id", default=None)
     d.add_argument("--project", default=None)
-    d.set_defaults(func=lambda a: memcapture.ingest_digest(a.session_id, a.project, sys.stdin.read()))
+    d.set_defaults(func=lambda a: memcapture.ingest_digest(a.session_id, a.project, "" if sys.stdin.isatty() else sys.stdin.read()))
 
     s = sub.add_parser("snapshot", help="ingest work-state snapshot from stdin")
     s.add_argument("--session-id", dest="session_id", default=None)
     s.add_argument("--project", default=None)
-    s.set_defaults(func=lambda a: memcapture.ingest_snapshot(a.session_id, a.project, sys.stdin.read()))
+    s.set_defaults(func=lambda a: memcapture.ingest_snapshot(a.session_id, a.project, "" if sys.stdin.isatty() else sys.stdin.read()))
 
     pt = sub.add_parser("patterns", help="pattern detection + wiki")
     pt.add_argument("--update", action="store_true")
