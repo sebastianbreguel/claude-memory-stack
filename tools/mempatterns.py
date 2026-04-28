@@ -556,19 +556,6 @@ class PatternsOrchestrator:
         )
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="mempatterns — detect patterns from memory.db")
-    parser.add_argument("--update", action="store_true")
-    parser.add_argument("--report", action="store_true")
-    parser.add_argument("--suggest", action="store_true")
-    parser.add_argument("--status", action="store_true")
-    parser.add_argument("--forget", type=str, metavar="NAME")
-    parser.add_argument("--rebuild", action="store_true")
-    parser.add_argument("--db-path", type=Path, default=DB_PATH, help=argparse.SUPPRESS)
-    parser.add_argument("--wiki-dir", type=Path, default=WIKI_DIR, help=argparse.SUPPRESS)
-    return parser
-
-
 def run(args: argparse.Namespace) -> int:
     orch = PatternsOrchestrator(db_path=args.db_path, wiki_dir=args.wiki_dir)
 
@@ -598,11 +585,3 @@ def run(args: argparse.Namespace) -> int:
         print(f"Deleted: {args.forget}" if found else f"Not found: {args.forget}")
 
     return 0
-
-
-def main() -> int:
-    return run(build_parser().parse_args())
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

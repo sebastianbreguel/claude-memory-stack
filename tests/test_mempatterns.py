@@ -739,20 +739,22 @@ class TestOrchestrator:
 
 class TestCLI:
     def test_status_flag(self, tmp_db, wiki_dir, capsys):
-        import sys
+        import argparse
 
-        from mempatterns import main
+        from mempatterns import run
 
         db_path, conn = tmp_db
         _insert_co_edit_sessions(conn, 5)
-        sys.argv = [
-            "mempatterns",
-            "--status",
-            "--db-path",
-            str(db_path),
-            "--wiki-dir",
-            str(wiki_dir),
-        ]
-        main()
+        ns = argparse.Namespace(
+            update=False,
+            rebuild=False,
+            status=True,
+            report=False,
+            suggest=False,
+            forget=None,
+            db_path=db_path,
+            wiki_dir=wiki_dir,
+        )
+        run(ns)
         captured = capsys.readouterr()
         assert "pattern" in captured.out.lower() or "run" in captured.out.lower()
