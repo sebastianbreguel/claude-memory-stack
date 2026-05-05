@@ -77,6 +77,15 @@ def _like_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _normalize_text(s: str) -> str:
+    """Collapse whitespace runs to single spaces and strip ends.
+
+    Used by supersede-on-content-drift detection so trivial whitespace edits
+    (line-wrap, trailing newline, double spaces) don't trigger a new row.
+    """
+    return re.sub(r"\s+", " ", s).strip()
+
+
 class _Janitor:
     """Cleanup operations on the memories table. Shares the parent connection."""
 
@@ -507,13 +516,15 @@ class MemoryDB:
         session_count = row["c"] if row else 0
         last_seen = self._relative_time(row["last"] if row else None)
 
-        pref_count = self.conn.execute("SELECT COUNT(*) as c FROM memories WHERE durability = 'durable'").fetchone()["c"]
+        pref_count = self.conn.execute(
+            "SELECT COUNT(*) as c FROM memories WHERE durability = 'durable' AND superseded_by IS NULL"
+        ).fetchone()["c"]
 
         handoff_line = None
         if project:
             handoff_topic = "handoff_" + re.sub(r"[^a-z0-9_]", "_", project.lower()).strip("_")
             hrow = self.conn.execute(
-                "SELECT content FROM memories WHERE topic = ? LIMIT 1",
+                "SELECT content FROM memories WHERE topic = ? AND superseded_by IS NULL LIMIT 1",
                 (handoff_topic,),
             ).fetchone()
             if hrow and hrow["content"]:
@@ -569,6 +580,7 @@ class MemoryDB:
                        + MIN(CAST(m.exposure_count AS REAL) / ?, 1.0) AS score
                 FROM memories m
                 LEFT JOIN sessions s ON m.source_session = s.session_id
+                WHERE m.superseded_by IS NULL
                 ORDER BY keep_priority DESC, score DESC
                 LIMIT 100
                 """,
@@ -580,6 +592,7 @@ class MemoryDB:
                        exp_decay(julianday('now') - julianday(last_accessed), ?)
                        + MIN(CAST(exposure_count AS REAL) / ?, 1.0) AS score
                 FROM memories
+                WHERE superseded_by IS NULL
                 ORDER BY score DESC
                 LIMIT 100""",
                 (DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE),
@@ -822,26 +835,60 @@ class MemoryDB:
         where_ctx: str | None = None,
         learned: str | None = None,
     ) -> None:
-        # ON CONFLICT target matches the partial unique index
-        # (idx_memories_topic_current). U3 replaces this with supersede-aware
-        # logic; until then, behavior is the same as v3 — overwrite-in-place
-        # on the currently-active row. Structured fields (why/where_ctx/learned)
-        # are also overwritten on conflict so a later digest with richer
-        # context replaces a leaner earlier one.
-        self.conn.execute(
+        """Insert or update a memory with supersede-on-content-drift semantics.
+
+        - No current row for topic → plain INSERT.
+        - Current row exists, content matches (after whitespace normalization) →
+          UPDATE in place; bump `last_accessed`, refresh durability + structured
+          fields, keep exposure_count and id.
+        - Current row exists, content differs → INSERT new row, mark old row
+          `superseded_by = new.id`. Old row remains for audit/F1 attribution.
+
+        The supersede sequence stages the new row with `superseded_by = old.id`
+        so the partial unique index never sees two un-superseded rows sharing
+        the same topic. Three statements in one transaction; commit at end.
+        """
+        norm_new = _normalize_text(content)
+        cur = self.conn.execute(
+            "SELECT id, content FROM memories WHERE topic = ? AND superseded_by IS NULL",
+            (topic,),
+        ).fetchone()
+
+        if cur is None:
+            self.conn.execute(
+                """INSERT INTO memories
+                       (topic, content, durability, source_session, why, where_ctx, learned)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (topic, content, durability, source_session, why, where_ctx, learned),
+            )
+            self.conn.commit()
+            return
+
+        if _normalize_text(cur["content"]) == norm_new:
+            self.conn.execute(
+                """UPDATE memories SET
+                       durability = ?,
+                       last_accessed = datetime('now'),
+                       source_session = ?,
+                       why = ?,
+                       where_ctx = ?,
+                       learned = ?
+                   WHERE id = ?""",
+                (durability, source_session, why, where_ctx, learned, cur["id"]),
+            )
+            self.conn.commit()
+            return
+
+        old_id = cur["id"]
+        cursor = self.conn.execute(
             """INSERT INTO memories
-                   (topic, content, durability, source_session, why, where_ctx, learned)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(topic) WHERE superseded_by IS NULL DO UPDATE SET
-                   content = excluded.content,
-                   durability = excluded.durability,
-                   last_accessed = datetime('now'),
-                   source_session = excluded.source_session,
-                   why = excluded.why,
-                   where_ctx = excluded.where_ctx,
-                   learned = excluded.learned""",
-            (topic, content, durability, source_session, why, where_ctx, learned),
+                   (topic, content, durability, source_session, why, where_ctx, learned, superseded_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (topic, content, durability, source_session, why, where_ctx, learned, old_id),
         )
+        new_id = cursor.lastrowid
+        self.conn.execute("UPDATE memories SET superseded_by = ? WHERE id = ?", (new_id, old_id))
+        self.conn.execute("UPDATE memories SET superseded_by = NULL WHERE id = ?", (new_id,))
         self.conn.commit()
 
     def cleanup_ephemeral(self) -> int:
@@ -853,12 +900,14 @@ class MemoryDB:
     def list_memories(self, topic_pattern: str | None = None) -> list[dict]:
         if topic_pattern:
             rows = self.conn.execute(
-                "SELECT topic, content, durability, created_at, last_accessed FROM memories WHERE topic LIKE ? ORDER BY last_accessed DESC",
+                "SELECT topic, content, durability, created_at, last_accessed FROM memories "
+                "WHERE topic LIKE ? AND superseded_by IS NULL ORDER BY last_accessed DESC",
                 (topic_pattern,),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT topic, content, durability, created_at, last_accessed FROM memories ORDER BY last_accessed DESC"
+                "SELECT topic, content, durability, created_at, last_accessed FROM memories "
+                "WHERE superseded_by IS NULL ORDER BY last_accessed DESC"
             ).fetchall()
         return [dict(r) for r in rows]
 
