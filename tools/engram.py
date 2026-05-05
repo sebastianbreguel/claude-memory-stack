@@ -563,12 +563,12 @@ _LLM_MODES = {
 
 
 def _git_state(cwd: str, timeout: int = 2) -> dict:
-    """Return `{"branch": str|None, "dirty_files": int}` for a cwd.
+    """Return `{"branch": str|None, "dirty_files": int, "recent_commits": list[str]}` for a cwd.
 
-    Best-effort: returns `{"branch": None, "dirty_files": 0}` on any failure
-    (not a repo, git missing, timeout). Short timeout keeps PreCompact snappy.
+    Best-effort: returns the empty/None defaults on any failure (not a repo,
+    git missing, timeout). Short timeout keeps PreCompact snappy.
     """
-    out = {"branch": None, "dirty_files": 0}
+    out: dict = {"branch": None, "dirty_files": 0, "recent_commits": []}
     if not cwd or not Path(cwd).is_dir():
         return out
     try:
@@ -588,6 +588,14 @@ def _git_state(cwd: str, timeout: int = 2) -> dict:
         )
         if st.returncode == 0:
             out["dirty_files"] = sum(1 for ln in st.stdout.splitlines() if ln.strip())
+        lg = subprocess.run(
+            ["git", "-C", cwd, "log", "-3", "--oneline", "--no-decorate"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if lg.returncode == 0:
+            out["recent_commits"] = [ln[:80] for ln in lg.stdout.splitlines() if ln.strip()]
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     return out
@@ -601,13 +609,25 @@ def _run_llm(args: argparse.Namespace) -> int:
     chunk = _extract_chunk(transcript, tail_lines=cfg["tail_lines"], max_chars=cfg["max_chars"])
     if len(chunk) < 50:
         return 0
-    # Snapshot mode: prepend deterministic git state so the LLM's summary
-    # can reference branch / dirty-file count without needing schema changes.
+    # Snapshot mode: prepend deterministic context (git state + last error)
+    # so the LLM's summary can reference recent commits / failures without
+    # needing a prompt rewrite or schema change.
     if args.mode == "snapshot":
         git = _git_state(_cwd_from_transcript(transcript))
-        if git["branch"] or git["dirty_files"]:
-            header = f"# Git state\nbranch: {git['branch'] or '-'}\ndirty_files: {git['dirty_files']}\n\n"
-            chunk = header + chunk
+        events = memdoctor.parse_jsonl(transcript)
+        last_error_raw = memdoctor.extract_error_context(events) if events else None
+        last_error = memdoctor.normalize_error(last_error_raw) if last_error_raw else None
+        if git["branch"] or git["dirty_files"] or git["recent_commits"] or last_error:
+            lines = ["# Git state"]
+            if git["branch"] or git["dirty_files"]:
+                lines.append(f"branch: {git['branch'] or '-'}")
+                lines.append(f"dirty_files: {git['dirty_files']}")
+            if git["recent_commits"]:
+                lines.append("recent_commits:")
+                lines.extend(f"- {c}" for c in git["recent_commits"])
+            if last_error:
+                lines.append(f"last_error: {last_error}")
+            chunk = "\n".join(lines) + "\n\n" + chunk
     output = _run_claude(cfg["prompt"], chunk)
     if not output:
         return 0

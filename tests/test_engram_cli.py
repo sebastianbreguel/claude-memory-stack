@@ -5,6 +5,7 @@ from __future__ import annotations
 import json as _json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO = Path(__file__).parent.parent
 ENGRAM = REPO / "tools" / "engram.py"
@@ -319,6 +320,118 @@ def test_git_state_reports_branch_and_dirty_count(tmp_path):
     state = mod._git_state(str(repo))
     assert state["branch"] == "main"
     assert state["dirty_files"] == 2
+    assert state["recent_commits"] == ["init"] or state["recent_commits"][0].endswith("init")
+    assert len(state["recent_commits"]) == 1
+
+
+def test_git_state_recent_commits_caps_at_three(tmp_path):
+    """_git_state returns at most 3 recent_commits even when more exist."""
+    import importlib.util
+    import subprocess as sp
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sp.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    sp.run(["git", "-C", str(repo), "config", "user.email", "t@t.t"], check=True)
+    sp.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    for i in range(5):
+        (repo / f"f{i}.txt").write_text(str(i))
+        sp.run(["git", "-C", str(repo), "add", f"f{i}.txt"], check=True)
+        sp.run(["git", "-C", str(repo), "commit", "-q", "-m", f"commit {i}"], check=True)
+
+    spec = importlib.util.spec_from_file_location("engram_mod", ENGRAM)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    state = mod._git_state(str(repo))
+    assert len(state["recent_commits"]) == 3
+
+
+def test_run_llm_snapshot_header_includes_commits_and_last_error(tmp_path, monkeypatch):
+    """In snapshot mode, the chunk passed to _run_claude carries recent_commits
+    and last_error (normalized) so the LLM has deterministic context the
+    transcript alone may compress lossily."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("engram_mod", ENGRAM)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    transcript = tmp_path / "t.jsonl"
+    body_lines = [
+        '{"type":"user","message":{"content":"please add a function that does interesting work"}}',
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"sure here is an implementation"}]}}',
+    ] * 5
+    body_lines.append(
+        '{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,'
+        '"content":"Traceback (most recent call last):\\n  File \\"/Users/x/foo.py\\", line 1\\n'
+        'AssertionError: expected 2 got 3"}]}}'
+    )
+    transcript.write_text("\n".join(body_lines) + "\n")
+
+    monkeypatch.setattr(
+        mod,
+        "_git_state",
+        lambda *a, **k: {"branch": "main", "dirty_files": 1, "recent_commits": ["abc feat: x", "def fix: y", "ghi docs: z"]},
+    )
+
+    captured: dict[str, str] = {}
+
+    def fake_run_claude(prompt, chunk, timeout=120):
+        captured["chunk"] = chunk
+        return ""
+
+    monkeypatch.setattr(mod, "_run_claude", fake_run_claude)
+
+    args = SimpleNamespace(mode="snapshot", transcript=str(transcript), session_id="sid", project="proj")
+    rc = mod._run_llm(args)
+    assert rc == 0  # _run_claude returned empty → early exit; the header was already built
+    chunk = captured["chunk"]
+    assert "recent_commits:" in chunk
+    assert "- abc feat: x" in chunk
+    assert "- def fix: y" in chunk
+    assert "- ghi docs: z" in chunk
+    assert "last_error:" in chunk
+    assert "Traceback" in chunk  # normalize_error returns the first meaningful line
+    assert "branch: main" in chunk
+    assert "dirty_files: 1" in chunk
+
+
+def test_run_llm_snapshot_header_omitted_when_empty(tmp_path, monkeypatch):
+    """When git state is fully empty and the transcript has no errors, no
+    header is prepended — preserves the existing header-omitted behavior."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("engram_mod", ENGRAM)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        '{"type":"user","message":{"content":"hello"}}\n'
+        + '{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}\n' * 50
+    )
+
+    monkeypatch.setattr(
+        mod,
+        "_git_state",
+        lambda *a, **k: {"branch": None, "dirty_files": 0, "recent_commits": []},
+    )
+
+    captured: dict[str, str] = {}
+
+    def fake_run_claude(prompt, chunk, timeout=120):
+        captured["chunk"] = chunk
+        return ""
+
+    monkeypatch.setattr(mod, "_run_claude", fake_run_claude)
+
+    args = SimpleNamespace(mode="snapshot", transcript=str(transcript), session_id="sid", project="proj")
+    mod._run_llm(args)
+    chunk = captured.get("chunk", "")
+    assert "# Git state" not in chunk
+    assert "recent_commits:" not in chunk
+    assert "last_error:" not in chunk
 
 
 def test_git_state_handles_non_repo(tmp_path):
@@ -332,6 +445,7 @@ def test_git_state_handles_non_repo(tmp_path):
     state = mod._git_state(str(tmp_path))
     assert state["branch"] is None
     assert state["dirty_files"] == 0
+    assert state["recent_commits"] == []
 
 
 def test_run_llm_helper_and_handler_are_distinct_names():
