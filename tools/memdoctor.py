@@ -85,22 +85,65 @@ PROPOSE_LLM_TIMEOUT_SECS = 60
 # Single-session noise excluded by default.
 MIN_NEGATIVE_SESSIONS = 2
 
-RULES_MAP = {
-    "correction-heavy": (
-        "When the user corrects you, stop and re-read their message. Quote back what they asked for and confirm before proceeding."
-    ),
-    "error-loop": (
-        "After 2 consecutive tool failures, stop and change your approach entirely. Explain what failed and try a different strategy."
-    ),
-    "keep-going-loop": (
-        "Complete the FULL task before stopping. Don't stop early — if the user asked for N items, deliver all N before handing back."
-    ),
-    "rapid-corrections": ("Two corrections within a minute is a frustration spike. Stop and ask what the user wants before continuing."),
-    "restart-cluster": (
-        "If the user restarted sessions 3+ times in this project within 30 minutes, something is confusing you. "
-        "Ask what went wrong in the previous attempts before retrying."
-    ),
+# Signal codes: snake_case identifiers stable across the JSON contract. The
+# internal signal *names* stay kebab-case (correction-heavy) for backward
+# compat with existing call sites; SIGNAL_INFO maps name → structured record.
+CODE_CORRECTION_HEAVY = "correction_heavy"
+CODE_ERROR_LOOP = "error_loop"
+CODE_KEEP_GOING = "keep_going"
+CODE_RAPID_CORRECTIONS = "rapid_corrections"
+CODE_RESTART_CLUSTER = "restart_cluster"
+
+# Severity drives F1's negative-decay weight (U6): high=2, medium=1, low=0.
+SIGNAL_INFO: dict[str, dict[str, str]] = {
+    "correction-heavy": {
+        "code": CODE_CORRECTION_HEAVY,
+        "severity": "high",
+        "safe_next_step": "Stop, re-read the user's last message, quote back what they asked for, confirm before continuing.",
+        "rule": (
+            "When the user corrects you, stop and re-read their message. Quote back what they asked for and confirm before proceeding."
+        ),
+    },
+    "error-loop": {
+        "code": CODE_ERROR_LOOP,
+        "severity": "high",
+        "safe_next_step": "Halt the current approach. Summarize what failed and propose a different strategy before retrying.",
+        "rule": (
+            "After 2 consecutive tool failures, stop and change your approach entirely. Explain what failed and try a different strategy."
+        ),
+    },
+    "keep-going-loop": {
+        "code": CODE_KEEP_GOING,
+        "severity": "medium",
+        "safe_next_step": "Re-check the original request count. Finish all remaining items before handing back.",
+        "rule": (
+            "Complete the FULL task before stopping. Don't stop early — if the user asked for N items, deliver all N before handing back."
+        ),
+    },
+    "rapid-corrections": {
+        "code": CODE_RAPID_CORRECTIONS,
+        "severity": "medium",
+        "safe_next_step": "Pause. Ask the user what they actually want before another action.",
+        "rule": "Two corrections within a minute is a frustration spike. Stop and ask what the user wants before continuing.",
+    },
+    "restart-cluster": {
+        "code": CODE_RESTART_CLUSTER,
+        "severity": "low",
+        "safe_next_step": "Ask the user what went wrong in the previous attempts before retrying.",
+        "rule": (
+            "If the user restarted sessions 3+ times in this project within 30 minutes, something is confusing you. "
+            "Ask what went wrong in the previous attempts before retrying."
+        ),
+    },
 }
+
+# Backward-compat: callers still using `RULES_MAP[name]` get the rule string.
+RULES_MAP = {name: info["rule"] for name, info in SIGNAL_INFO.items()}
+
+
+def signal_info(name: str) -> dict[str, str] | None:
+    """Structured record for a signal name. Returns None for unknown names."""
+    return SIGNAL_INFO.get(name)
 
 
 def parse_jsonl(path: Path) -> list[dict]:
@@ -513,7 +556,10 @@ def _print_summary(report: dict) -> None:
     print(f"\nSignal totals (denominator: {sessions} sessions):")
     for signal, count in sorted(totals.items(), key=lambda x: -x[1]):
         pct = (count / sessions * 100) if sessions else 0
-        print(f"  {signal}: {count} ({pct:.1f}%)")
+        # U5: prefix [severity:code] when the signal is in the structured map.
+        info = SIGNAL_INFO.get(signal)
+        prefix = f"[{info['severity']}:{info['code']}] " if info else ""
+        print(f"  {prefix}{signal}: {count} ({pct:.1f}%)")
     print("\nTop projects:")
     ranked = sorted(
         projects.items(),
@@ -798,12 +844,30 @@ def propose_memories(project_filter: str | None) -> int:
 def _json_payload(report: dict, want_rules: bool) -> dict:
     sessions = report["sessions"]
     totals = report["totals"]
+    # U5: structured signal records — code/severity/safe_next_step alongside
+    # raw counts. Additive: existing keys (totals, projects, error_samples)
+    # untouched so external consumers don't break.
+    structured = []
+    for name, count in sorted(totals.items(), key=lambda kv: -kv[1]):
+        info = SIGNAL_INFO.get(name)
+        if info is None:
+            continue
+        structured.append(
+            {
+                "name": name,
+                "code": info["code"],
+                "severity": info["severity"],
+                "safe_next_step": info["safe_next_step"],
+                "count": count,
+            }
+        )
     payload = {
         "meta": {
             "sessions_analyzed": sessions,
             "min_corrections_to_flag": MIN_CORRECTIONS_TO_FLAG,
         },
         "totals": totals,
+        "signals": structured,
         "projects": {
             project: {
                 "signals": dict(sig_counts),
