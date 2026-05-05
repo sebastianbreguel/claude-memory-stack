@@ -138,6 +138,28 @@ def test_inject_runs(tmp_path, monkeypatch):
     assert result.returncode == 0
 
 
+def test_doctor_negative_runs(tmp_path, monkeypatch):
+    """`engram doctor --negative` exits 0 on a fresh DB and prints the no-attributions line."""
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    result = _run(["doctor", "--negative"])
+    assert result.returncode == 0
+    assert "no negative attributions" in result.stdout
+
+
+def test_doctor_negative_json_runs(tmp_path, monkeypatch):
+    """`engram doctor --negative --json` emits parseable JSON with the expected shape."""
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    result = _run(["doctor", "--negative", "--json"])
+    assert result.returncode == 0
+    payload = _json.loads(result.stdout)
+    assert "negative_attributions" in payload
+    assert "threshold" in payload
+
+
 def test_on_session_start_emits_valid_json(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     (fake_home / ".claude").mkdir(parents=True)

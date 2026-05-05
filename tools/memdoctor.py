@@ -80,6 +80,10 @@ RESTART_CLUSTER_SIZE = 3
 RESTART_WINDOW_MINUTES = 30
 PROPOSE_MIN_CORRECTIONS = 4
 PROPOSE_LLM_TIMEOUT_SECS = 60
+# Negative-feedback loop: a memory must be implicated in ≥ this many distinct
+# correction-flagged sessions before `--propose --negative` proposes a down-weight.
+# Single-session noise excluded by default.
+MIN_NEGATIVE_SESSIONS = 2
 
 RULES_MAP = {
     "correction-heavy": (
@@ -261,6 +265,23 @@ def count_restart_clusters(starts: list[datetime]) -> int:
     return count
 
 
+def detect_negative_attribution(events: list[dict], session_id: str, conn: sqlite3.Connection) -> dict[str, int]:
+    """If `events` flag correction-heavy or rapid-corrections, return every topic
+    injected into this session_id (each topic counted once). Otherwise empty dict.
+
+    Caller aggregates per-session dicts to get a project-wide implicated-session
+    count per topic.
+    """
+    flagged = bool(detect_correction_heavy(events) or detect_rapid_corrections(events))
+    if not flagged or not session_id:
+        return {}
+    try:
+        rows = conn.execute("SELECT topic FROM injections WHERE session_id = ?", (session_id,)).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {r[0]: 1 for r in rows}
+
+
 def detect_signals(events: list[dict]) -> list[str]:
     return [
         s
@@ -413,6 +434,72 @@ def _analyze(project_filter: str | None = None) -> dict:
         "totals": dict(totals),
         "error_samples": error_samples,
     }
+
+
+def _analyze_attribution(project_filter: str | None = None, db_path: Path = MEMORY_DB) -> dict[str, int]:
+    """Walk sessions, return {topic: implicated_session_count} for memories
+    injected into sessions later flagged correction-heavy or rapid-corrections.
+
+    Returns {} when memory.db is missing or the v3 `injections` table is absent
+    (older DBs). Read-only on memory.db.
+    """
+    if not db_path.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return {}
+    try:
+        accumulator: Counter[str] = Counter()
+        for _project, sid, events in _iter_sessions(project_filter):
+            per_session = detect_negative_attribution(events, sid, conn)
+            accumulator.update(per_session)
+        return dict(accumulator)
+    finally:
+        conn.close()
+
+
+def _print_negative(attributions: dict[str, int]) -> None:
+    if not attributions:
+        print("engram doctor — no negative attributions detected.")
+        return
+    print("engram doctor — memories implicated in correction-flagged sessions:\n")
+    print(f"{'topic':40s}  implicated_sessions  status")
+    print("-" * 72)
+    ranked = sorted(attributions.items(), key=lambda kv: -kv[1])
+    for topic, count in ranked:
+        status = "PROPOSE" if count >= MIN_NEGATIVE_SESSIONS else "below-threshold"
+        print(f"{topic[:40]:40s}  {count:>19d}  {status}")
+    print(f"\nThreshold: {MIN_NEGATIVE_SESSIONS} sessions. Use `engram doctor --propose --negative` to apply down-weights.")
+
+
+def _apply_negative_downweight(attributions: dict[str, int], db_path: Path = MEMORY_DB) -> int:
+    """Interactive: for each topic ≥ MIN_NEGATIVE_SESSIONS, prompt y/N and
+    decrement exposure_count by 1 (floor 0). Returns number of topics applied."""
+    eligible = [(t, n) for t, n in attributions.items() if n >= MIN_NEGATIVE_SESSIONS]
+    if not eligible:
+        print("No memories meet the negative-attribution threshold.")
+        return 0
+    if not db_path.exists():
+        print(f"memory.db not found at {db_path}")
+        return 0
+    conn = sqlite3.connect(str(db_path))
+    applied = 0
+    try:
+        print("Proposed down-weights (decrement exposure_count by 1, floor 0):\n")
+        for topic, n in sorted(eligible, key=lambda kv: -kv[1]):
+            ans = input(f"  [{n} sessions] {topic} — apply? [y/N] ").strip().lower()
+            if ans == "y":
+                conn.execute(
+                    "UPDATE memories SET exposure_count = MAX(0, exposure_count - 1) WHERE topic = ?",
+                    (topic,),
+                )
+                applied += 1
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"\nApplied {applied} down-weight(s).")
+    return applied
 
 
 def _print_summary(report: dict) -> None:
@@ -739,9 +826,23 @@ def run(
     per_project: bool = False,
     propose: bool = False,
     json: bool = False,
+    negative: bool = False,
 ) -> int:
+    if propose and negative:
+        attributions = _analyze_attribution(project_filter=project)
+        _apply_negative_downweight(attributions)
+        return 0
     if propose:
         return propose_memories(project_filter=project)
+    if negative:
+        attributions = _analyze_attribution(project_filter=project)
+        if json:
+            import json as _json
+
+            print(_json.dumps({"negative_attributions": attributions, "threshold": MIN_NEGATIVE_SESSIONS}, indent=2))
+            return 0
+        _print_negative(attributions)
+        return 0
     report = _analyze(project_filter=project)
     if json:
         import json as _json

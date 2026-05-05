@@ -997,6 +997,7 @@ def _on_session_start(_args: argparse.Namespace) -> int:
         payload = {}
     cwd = payload.get("cwd", "")
     project_key = cwd.replace("/", "-") if cwd else ""
+    session_id = payload.get("session_id") or ""
 
     import memcapture
 
@@ -1027,7 +1028,7 @@ def _on_session_start(_args: argparse.Namespace) -> int:
     else:
         buf = io.StringIO()
         try:
-            memcapture.inject(project_key or None, out=buf, db=shared_db)
+            memcapture.inject(project_key or None, out=buf, db=shared_db, session_id=session_id or None)
         except RuntimeError as e:
             schema_error = schema_error or str(e)
         context = buf.getvalue()
@@ -1087,7 +1088,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     i = sub.add_parser("inject", help="produce SessionStart context")
     i.add_argument("--project", default=None)
-    i.set_defaults(func=lambda a: memcapture.inject(a.project))
+    i.add_argument("--session-id", dest="session_id", default=None)
+    i.set_defaults(func=lambda a: memcapture.inject(a.project, session_id=a.session_id))
 
     d = sub.add_parser("digest", help="ingest LLM digest from stdin")
     d.add_argument("--session-id", dest="session_id", default=None)
@@ -1151,8 +1153,20 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--per-project", action="store_true", help="with --rules, emit one rule block per project")
     dr.add_argument("--propose", action="store_true", help="propose feedback memories from the most recent session")
     dr.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of human-readable summary")
+    dr.add_argument(
+        "--negative",
+        action="store_true",
+        help="show memories implicated in correction-flagged sessions; with --propose, interactively down-weights them",
+    )
     dr.set_defaults(
-        func=lambda a: memdoctor.run(project=a.project, rules=a.rules, per_project=a.per_project, propose=a.propose, json=a.json)
+        func=lambda a: memdoctor.run(
+            project=a.project,
+            rules=a.rules,
+            per_project=a.per_project,
+            propose=a.propose,
+            json=a.json,
+            negative=a.negative,
+        )
     )
 
     op = sub.add_parser("on-precompact", help="hook: orchestrate PreCompact work")

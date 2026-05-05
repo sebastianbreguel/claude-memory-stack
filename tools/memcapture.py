@@ -118,7 +118,7 @@ class _Janitor:
 class MemoryDB:
     """SQLite-backed session memory store with FTS5 search."""
 
-    LATEST_SCHEMA_VERSION: ClassVar[int] = 2
+    LATEST_SCHEMA_VERSION: ClassVar[int] = 3
 
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
@@ -202,6 +202,13 @@ class MemoryDB:
             CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed DESC);
             CREATE INDEX IF NOT EXISTS idx_memories_source_session ON memories(source_session);
 
+            CREATE TABLE IF NOT EXISTS injections (
+                session_id TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                injected_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (session_id, topic)
+            );
+
             CREATE TABLE IF NOT EXISTS compactions (
                 id INTEGER PRIMARY KEY,
                 session_id TEXT,
@@ -250,6 +257,16 @@ class MemoryDB:
             if "exposure_count" not in cols:
                 self.conn.execute("ALTER TABLE memories ADD COLUMN exposure_count INTEGER NOT NULL DEFAULT 0")
             self.conn.execute("PRAGMA user_version = 2")
+            self.conn.commit()
+
+        if version < 3:
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS injections ("
+                "session_id TEXT NOT NULL, topic TEXT NOT NULL, "
+                "injected_at TEXT NOT NULL DEFAULT (datetime('now')), "
+                "PRIMARY KEY (session_id, topic))"
+            )
+            self.conn.execute("PRAGMA user_version = 3")
             self.conn.commit()
 
     def _content_hash(self, content: str) -> str:
@@ -468,7 +485,7 @@ class MemoryDB:
             return f"{header}\n↳ {handoff_line}"
         return header
 
-    def inject_context(self, project: str | None = None) -> str:
+    def inject_context(self, project: str | None = None, session_id: str | None = None) -> str:
         """Generate ~350 token context block from learned memories + optional compaction snapshot."""
         # cleanup_ephemeral runs at most once per day via mtime-guard on a marker
         # file — avoids a DELETE on every SessionStart.
@@ -570,6 +587,15 @@ class MemoryDB:
                     f"UPDATE memories SET last_accessed = datetime('now'), exposure_count = exposure_count + 1 WHERE topic IN ({placeholders})",
                     kept_topics,
                 )
+                # Per-session attribution log (negative-feedback loop, schema v3).
+                # Skipped when session_id is unavailable — synthesizing one would
+                # pollute attribution. Composite PK + INSERT OR IGNORE makes
+                # repeat injects within the same session idempotent.
+                if session_id:
+                    self.conn.executemany(
+                        "INSERT OR IGNORE INTO injections (session_id, topic) VALUES (?, ?)",
+                        [(session_id, t) for t in kept_topics],
+                    )
                 self.conn.commit()
 
         # Append active patterns (co-edits, recurring errors)
@@ -1156,9 +1182,15 @@ def recent(n: int, *, db: MemoryDB | None = None, out: TextIO | None = None) -> 
     return 0
 
 
-def inject(project: str | None, *, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
+def inject(
+    project: str | None,
+    *,
+    db: MemoryDB | None = None,
+    out: TextIO | None = None,
+    session_id: str | None = None,
+) -> int:
     with _session(db, out) as d:
-        print(d.inject_context(project))
+        print(d.inject_context(project, session_id=session_id))
     return 0
 
 

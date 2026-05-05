@@ -68,8 +68,8 @@ def test_capture_transcript_exits_zero(tmp_home):
     assert result.returncode == 0, f"capture failed: {result.stderr}"
 
 
-def test_schema_user_version_is_2(tmp_home):
-    """PRAGMA user_version is stamped to 2 after any capture (v2 baseline).
+def test_schema_user_version_is_3(tmp_home):
+    """PRAGMA user_version is stamped to 3 after any capture (v3 baseline).
 
     Future schema changes must bump this in `_migrate` and gate their ALTERs
     behind `if version < N:` blocks. This test locks the baseline.
@@ -82,9 +82,11 @@ def test_schema_user_version_is_2(tmp_home):
     conn = sqlite3.connect(str(db_path))
     try:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     finally:
         conn.close()
-    assert version == 2, f"expected user_version=2, got {version}"
+    assert version == 3, f"expected user_version=3, got {version}"
+    assert "injections" in tables, "v3 must create injections table"
 
 
 def test_migrate_refuses_future_schema_version(tmp_path):
