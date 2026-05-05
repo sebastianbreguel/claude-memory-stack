@@ -1,7 +1,7 @@
 ---
 title: "feat: memory-quality bundle — schema v4, supersede, query-aware retrieval, structured codes"
 type: feat
-status: active
+status: completed
 date: 2026-05-05
 ---
 
