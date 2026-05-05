@@ -37,6 +37,29 @@ def _slugify(path: str, max_len: int = 80) -> str:
     return slug[: max_len - 9] + "-" + h
 
 
+def _parse_frontmatter_scalar(content: str, key: str, default: str) -> str:
+    """Extract `key: value` from the first match in a markdown file's text."""
+    m = re.search(rf"{re.escape(key)}:\s*(\S+)", content)
+    return m.group(1) if m else default
+
+
+def _parse_md_bullets(content: str, header: str) -> list[str]:
+    """Collect `- ` bullet text under a markdown H2 `header`, stopping at the
+    next `## ` heading. Returns each bullet with the leading `- ` stripped."""
+    out: list[str] = []
+    in_section = False
+    for line in content.splitlines():
+        if line.strip() == header:
+            in_section = True
+            continue
+        if in_section:
+            if line.startswith("## "):
+                break
+            if line.startswith("- "):
+                out.append(line[2:])
+    return out
+
+
 class WikiWriter:
     """Writes and maintains Obsidian-compatible wiki pages for patterns."""
 
@@ -64,26 +87,12 @@ class WikiWriter:
 
         if page_path.exists():
             content = page_path.read_text()
-            # Parse first_seen
-            m = re.search(r"first_seen:\s*(\S+)", content)
-            if m:
-                first_seen = m.group(1)
-            # Parse existing co_edits: lines like "- [[slug]] — N sessions"
-            for line in content.splitlines():
-                cm = re.match(r"-\s+\[\[([^\]]+)\]\]\s+[—-]+\s+(\d+)\s+sessions?", line)
+            first_seen = _parse_frontmatter_scalar(content, "first_seen", today)
+            for bullet in _parse_md_bullets(content, "## Co-edited with"):
+                cm = re.match(r"\[\[([^\]]+)\]\]\s+[—-]+\s+(\d+)\s+sessions?", bullet)
                 if cm:
                     existing_co_edits[cm.group(1)] = int(cm.group(2))
-            # Parse existing errors: lines under "## Common errors"
-            in_errors = False
-            for line in content.splitlines():
-                if line.strip() == "## Common errors":
-                    in_errors = True
-                    continue
-                if in_errors:
-                    if line.startswith("## "):
-                        break
-                    if line.startswith("- "):
-                        existing_errors.append(line[2:])
+            existing_errors = _parse_md_bullets(content, "## Common errors")
 
         # Merge co_edits
         for partner, count in co_edits:
@@ -135,20 +144,8 @@ sessions: {sessions}
 
         if page_path.exists():
             content = page_path.read_text()
-            m = re.search(r"first_detected:\s*(\S+)", content)
-            if m:
-                first_detected = m.group(1)
-            # Parse existing history entries
-            in_history = False
-            for line in content.splitlines():
-                if line.strip() == "## History":
-                    in_history = True
-                    continue
-                if in_history:
-                    if line.startswith("## "):
-                        break
-                    if line.startswith("- "):
-                        history_lines.append(line[2:])
+            first_detected = _parse_frontmatter_scalar(content, "first_detected", today)
+            history_lines = _parse_md_bullets(content, "## History")
             # Prepend new reinforcement entry
             history_lines.insert(0, f"{today}: reinforced (confidence {confidence})")
         else:
