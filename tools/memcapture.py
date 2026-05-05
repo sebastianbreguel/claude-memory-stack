@@ -817,20 +817,30 @@ class MemoryDB:
         content: str,
         durability: str,
         source_session: str | None = None,
+        *,
+        why: str | None = None,
+        where_ctx: str | None = None,
+        learned: str | None = None,
     ) -> None:
         # ON CONFLICT target matches the partial unique index
         # (idx_memories_topic_current). U3 replaces this with supersede-aware
         # logic; until then, behavior is the same as v3 — overwrite-in-place
-        # on the currently-active row.
+        # on the currently-active row. Structured fields (why/where_ctx/learned)
+        # are also overwritten on conflict so a later digest with richer
+        # context replaces a leaner earlier one.
         self.conn.execute(
-            """INSERT INTO memories (topic, content, durability, source_session)
-               VALUES (?, ?, ?, ?)
+            """INSERT INTO memories
+                   (topic, content, durability, source_session, why, where_ctx, learned)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(topic) WHERE superseded_by IS NULL DO UPDATE SET
                    content = excluded.content,
                    durability = excluded.durability,
                    last_accessed = datetime('now'),
-                   source_session = excluded.source_session""",
-            (topic, content, durability, source_session),
+                   source_session = excluded.source_session,
+                   why = excluded.why,
+                   where_ctx = excluded.where_ctx,
+                   learned = excluded.learned""",
+            (topic, content, durability, source_session, why, where_ctx, learned),
         )
         self.conn.commit()
 
@@ -1095,15 +1105,32 @@ def parse_digest_output(text: str, project: str | None = None) -> list[dict]:
     handoff_char_count = 0
     in_handoff = False
 
-    def _parse_fact_line(s: str) -> tuple[str, str, str] | None:
-        parts = [p.strip() for p in s.split("|", 2)]
-        if len(parts) != 3:
+    def _norm_optional(field: str) -> str | None:
+        """`-`, empty, or whitespace-only → None; otherwise stripped value."""
+        v = field.strip()
+        if not v or v == "-":
             return None
-        t, d, c = parts
+        return v
+
+    def _parse_fact_line(s: str) -> tuple[str, str, str, str | None, str | None, str | None] | None:
+        # Accept legacy 3-field form (topic|durability|content) and new 6-field
+        # form (topic|durability|content|why|where|learned). Other arities are
+        # treated as malformed and skipped.
+        parts = [p.strip() for p in s.split("|")]
+        if len(parts) == 3:
+            t, d, c = parts
+            why, where_ctx, learned = None, None, None
+        elif len(parts) == 6:
+            t, d, c, why_raw, where_raw, learned_raw = parts
+            why = _norm_optional(why_raw)
+            where_ctx = _norm_optional(where_raw)
+            learned = _norm_optional(learned_raw)
+        else:
+            return None
         if d not in ("durable", "ephemeral") or not t or not c:
             return None
         t = re.sub(r"[^a-z0-9_]", "_", t.lower()).strip("_")
-        return (t, d, c) if t else None
+        return (t, d, c, why, where_ctx, learned) if t else None
 
     for raw in text.strip().splitlines():
         stripped = raw.strip()
@@ -1128,8 +1155,15 @@ def parse_digest_output(text: str, project: str | None = None) -> list[dict]:
         parsed = _parse_fact_line(stripped)
         if parsed is None:
             continue
-        topic, durability, content = parsed
-        memories[topic] = {"topic": topic, "content": content, "durability": durability}
+        topic, durability, content, why, where_ctx, learned = parsed
+        memories[topic] = {
+            "topic": topic,
+            "content": content,
+            "durability": durability,
+            "why": why,
+            "where_ctx": where_ctx,
+            "learned": learned,
+        }
 
     result = list(memories.values())
     if handoff_lines and project:
@@ -1276,7 +1310,15 @@ def ingest_digest(
     with _session(db, out) as d:
         memories = parse_digest_output(text, project=project)
         for m in memories:
-            d.upsert_memory(m["topic"], m["content"], m["durability"], source_session=session_id)
+            d.upsert_memory(
+                m["topic"],
+                m["content"],
+                m["durability"],
+                source_session=session_id,
+                why=m.get("why"),
+                where_ctx=m.get("where_ctx"),
+                learned=m.get("learned"),
+            )
         print(f"Ingested {len(memories)} memories")
     return 0
 

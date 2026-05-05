@@ -221,13 +221,21 @@ def _extract_chunk(transcript: Path, tail_lines: int = 800, max_chars: int = 600
 
 DIGEST_PROMPT = """Analyze this coding session transcript. Extract concrete, reusable facts as atomic memories.
 
-Each memory has:
+Each memory has these required fields:
 - topic: a stable snake_case identifier (e.g., "package_manager", "test_style", "current_refactor")
 - durability: "durable" for preferences/lessons/practices that persist, "ephemeral" for current project state and pending work
 - content: one specific sentence
 
+And these optional structured fields (use when meaningful, otherwise emit `-`):
+- why: the reason behind the fact — what motivated it, what alternative was rejected, why it matters
+- where: the scope where the fact applies — repo name, cwd path fragment, language, or framework. `-` when global.
+- learned: a short reflection — what would have been done differently, what to remember next time
+
 Rules:
-- One fact per line, format: topic | durability | content
+- One fact per line. Two valid formats:
+    Legacy:   topic | durability | content
+    Extended: topic | durability | content | why | where | learned
+  Use `-` for any optional field you cannot fill. Both forms are accepted; prefer extended when context allows.
 - Be specific, not generic. "prefers uv over pip" not "has package manager preferences"
 - Reuse existing topics when the concept matches — e.g., if "package_manager" already covers uv preferences, update that topic instead of creating "dependency_management" or "uv_preference". Same concept = same topic.
 - Skip routine actions (file reads, git commits, navigation)
