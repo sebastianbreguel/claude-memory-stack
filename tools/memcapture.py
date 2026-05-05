@@ -46,6 +46,32 @@ def _exp_decay_sql(days: float | None, half_life: float) -> float:
 DB_PATH = Path.home() / ".claude" / "memory.db"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
+# Query-aware ranking (U4): LIKE-based, no FTS5 dependency. Stopwords skip
+# noise like "the/and/with"; tokens shorter than 3 chars match too aggressively.
+_QUERY_STOPWORDS = frozenset(
+    "the and for with this that from your you are was were has have had not but "
+    "can will into about over under more less than then they them their there here "
+    "what when where which who whom how why our its own off out per via yet".split()
+)
+
+
+def _tokenize_query(q: str | None, max_tokens: int = 5) -> list[str]:
+    """Tokenize a free-text query for LIKE-based ranking. Lowercase, alphanumeric
+    chunks of length >=3, stopwords dropped, deduped in insertion order, capped."""
+    if not q:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in re.findall(r"[a-zA-Z0-9_]+", q.lower()):
+        if len(tok) < 3 or tok in _QUERY_STOPWORDS or tok in seen:
+            continue
+        seen.add(tok)
+        out.append(tok)
+        if len(out) >= max_tokens:
+            break
+    return out
+
+
 # --- Heuristic patterns ---
 
 DECISION_PATTERNS = [
@@ -129,10 +155,14 @@ class MemoryDB:
 
     LATEST_SCHEMA_VERSION: ClassVar[int] = 4
 
-    def __init__(self, db_path: Path = DB_PATH):
-        self.db_path = db_path
+    def __init__(self, db_path: Path | None = None):
+        # Re-evaluate $HOME at construction time. Module-level DB_PATH freezes
+        # at first import; tests that monkeypatch HOME later would otherwise
+        # share a stale tmp path across fixtures, leading to cross-test DB
+        # corruption. Production callers pass no arg → live ~/.claude/memory.db.
+        self.db_path = db_path if db_path is not None else Path.home() / ".claude" / "memory.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(db_path))
+        self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
@@ -557,11 +587,41 @@ class MemoryDB:
             return f"{header}\n↳ {handoff_line}"
         return header
 
-    def inject_context(self, project: str | None = None, session_id: str | None = None) -> str:
-        """Generate ~350 token context block from learned memories + optional compaction snapshot."""
+    def inject_context(
+        self,
+        project: str | None = None,
+        session_id: str | None = None,
+        query: str | None = None,
+    ) -> str:
+        """Generate ~350 token context block from learned memories + optional compaction snapshot.
+
+        When `query` is provided, memories are reranked by per-token LIKE matches
+        across topic/content/why/where_ctx/learned (weights 5/3/2/2/2). Recency +
+        reinforcement remain the secondary tiebreakers.
+        """
         # cleanup_ephemeral runs at most once per day via mtime-guard on a marker
         # file — avoids a DELETE on every SessionStart.
         self._cleanup_ephemeral_daily()
+
+        tokens = _tokenize_query(query)
+        if tokens:
+            # Per token: topic(5) + content(3) + why/where_ctx/learned(2 each).
+            # COALESCE on nullable columns so NULL doesn't break LIKE.
+            per_token_sql = (
+                "(CASE WHEN m.topic LIKE ? ESCAPE '\\' THEN 5 ELSE 0 END"
+                " + CASE WHEN m.content LIKE ? ESCAPE '\\' THEN 3 ELSE 0 END"
+                " + CASE WHEN COALESCE(m.why, '') LIKE ? ESCAPE '\\' THEN 2 ELSE 0 END"
+                " + CASE WHEN COALESCE(m.where_ctx, '') LIKE ? ESCAPE '\\' THEN 2 ELSE 0 END"
+                " + CASE WHEN COALESCE(m.learned, '') LIKE ? ESCAPE '\\' THEN 2 ELSE 0 END)"
+            )
+            qscore_expr = " + ".join([per_token_sql] * len(tokens))
+            qscore_params: list[str] = []
+            for t in tokens:
+                pat = f"%{_like_escape(t)}%"
+                qscore_params.extend([pat] * 5)
+        else:
+            qscore_expr = "0"
+            qscore_params = []
 
         # LIMIT 100 is far above the char_budget can render (~20 rows at 70 chars).
         # Keeps the query bounded as memories grow.
@@ -569,7 +629,7 @@ class MemoryDB:
             # Durable memories (preferences) stay global — general guidance applies everywhere.
             # Ephemeral memories (current context) are prioritized by project match.
             rows = self.conn.execute(
-                """
+                f"""
                 SELECT m.topic, m.content, m.durability, m.last_accessed,
                        CASE
                          WHEN m.durability = 'durable' THEN 1
@@ -577,25 +637,27 @@ class MemoryDB:
                          ELSE 0
                        END AS keep_priority,
                        exp_decay(julianday('now') - julianday(m.last_accessed), ?)
-                       + MIN(CAST(m.exposure_count AS REAL) / ?, 1.0) AS score
+                       + MIN(CAST(m.exposure_count AS REAL) / ?, 1.0) AS score,
+                       {qscore_expr} AS query_score
                 FROM memories m
                 LEFT JOIN sessions s ON m.source_session = s.session_id
                 WHERE m.superseded_by IS NULL
-                ORDER BY keep_priority DESC, score DESC
+                ORDER BY query_score DESC, keep_priority DESC, score DESC
                 LIMIT 100
                 """,
-                (f"%{_like_escape(project)}%", DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE),
+                (f"%{_like_escape(project)}%", DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE, *qscore_params),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                """SELECT topic, content, durability, last_accessed,
-                       exp_decay(julianday('now') - julianday(last_accessed), ?)
-                       + MIN(CAST(exposure_count AS REAL) / ?, 1.0) AS score
-                FROM memories
-                WHERE superseded_by IS NULL
-                ORDER BY score DESC
+                f"""SELECT m.topic, m.content, m.durability, m.last_accessed,
+                       exp_decay(julianday('now') - julianday(m.last_accessed), ?)
+                       + MIN(CAST(m.exposure_count AS REAL) / ?, 1.0) AS score,
+                       {qscore_expr} AS query_score
+                FROM memories m
+                WHERE m.superseded_by IS NULL
+                ORDER BY query_score DESC, score DESC
                 LIMIT 100""",
-                (DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE),
+                (DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE, *qscore_params),
             ).fetchall()
 
         if not rows:
@@ -1336,9 +1398,10 @@ def inject(
     db: MemoryDB | None = None,
     out: TextIO | None = None,
     session_id: str | None = None,
+    query: str | None = None,
 ) -> int:
     with _session(db, out) as d:
-        print(d.inject_context(project, session_id=session_id))
+        print(d.inject_context(project, session_id=session_id, query=query))
     return 0
 
 

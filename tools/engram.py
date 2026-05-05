@@ -1054,9 +1054,29 @@ def _on_session_start(_args: argparse.Namespace) -> int:
     if executive:
         context = executive
     else:
+        # F2 query signal: rerank injected memories by relevance to the current
+        # session frame (branch + recent commits). Pure best-effort — silent on
+        # any git failure since SessionStart must never block.
+        query_parts: list[str] = []
+        if cwd:
+            try:
+                gs = _git_state(cwd)
+                if gs.get("branch"):
+                    query_parts.append(gs["branch"])
+                query_parts.extend(gs.get("recent_commits", [])[:3])
+            except Exception:
+                pass
+        query = " ".join(query_parts) or None
+
         buf = io.StringIO()
         try:
-            memcapture.inject(project_key or None, out=buf, db=shared_db, session_id=session_id or None)
+            memcapture.inject(
+                project_key or None,
+                out=buf,
+                db=shared_db,
+                session_id=session_id or None,
+                query=query,
+            )
         except RuntimeError as e:
             schema_error = schema_error or str(e)
         context = buf.getvalue()
