@@ -460,19 +460,16 @@ class TestJsonOutput:
         }
 
     def test_json_payload_shape(self, monkeypatch):
-        import argparse as _argparse
-
         import memdoctor
 
         monkeypatch.setattr(memdoctor, "_analyze", lambda project_filter=None: self._stub_report())
-        ns = _argparse.Namespace(project=None, rules=False, per_project=False, propose=False, json=True)
         captured = {}
 
         def fake_print(s):
             captured["out"] = s
 
         monkeypatch.setattr("builtins.print", fake_print)
-        rc = memdoctor.run(ns)
+        rc = memdoctor.run(json=True)
         assert rc == 0
         payload = json.loads(captured["out"])
         assert payload["meta"]["sessions_analyzed"] == 7
@@ -483,15 +480,12 @@ class TestJsonOutput:
         assert "rules_markdown" not in payload
 
     def test_json_with_rules_includes_markdown(self, monkeypatch):
-        import argparse as _argparse
-
         import memdoctor
 
         monkeypatch.setattr(memdoctor, "_analyze", lambda project_filter=None: self._stub_report())
-        ns = _argparse.Namespace(project=None, rules=True, per_project=False, propose=False, json=True)
         captured = {}
         monkeypatch.setattr("builtins.print", lambda s: captured.setdefault("out", s))
-        memdoctor.run(ns)
+        memdoctor.run(rules=True, json=True)
         payload = json.loads(captured["out"])
         assert isinstance(payload.get("rules_markdown"), str)
         assert payload["rules_markdown"]  # non-empty when signals exceed threshold

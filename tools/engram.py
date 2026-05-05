@@ -618,7 +618,7 @@ def _run_llm(args: argparse.Namespace) -> int:
     return memcapture.ingest_snapshot(args.session_id, args.project, output)
 
 
-def _on_executive(args: argparse.Namespace) -> int:
+def _build_executive(*, cwd: str, project_key: str) -> int:
     """Internal: merge latest recap + engram inject_context into a bullet-list
     executive summary, cache to disk for next SessionStart.
 
@@ -626,8 +626,8 @@ def _on_executive(args: argparse.Namespace) -> int:
     _on_session_start. On any failure, silently no-ops (SessionStart falls
     back to the live inject path).
     """
-    cwd = args.cwd or ""
-    project_key = args.project_key or ""
+    cwd = cwd or ""
+    project_key = project_key or ""
     if not cwd:
         return 0
 
@@ -688,6 +688,13 @@ def _on_executive(args: argparse.Namespace) -> int:
     return 0
 
 
+def _on_executive(args: argparse.Namespace) -> int:
+    """Argparse-dispatched wrapper around _build_executive. Kept so direct
+    test callers (and the `engram _executive` subcommand) can pass a Namespace
+    while internal call sites use the kwarg-pure body."""
+    return _build_executive(cwd=args.cwd or "", project_key=args.project_key or "")
+
+
 def _log_tail(args: argparse.Namespace) -> int:
     """Print the last N lines of ~/.claude/engram.log (background LLM failures, timeouts)."""
     log = Path.home() / ".claude" / "engram.log"
@@ -724,8 +731,7 @@ def _preview(args: argparse.Namespace) -> int:
         sys.stdout.write(f"(no previous executive summary at {prev})\n")
         return 0
     if not cache.exists():
-        ns = argparse.Namespace(cwd=cwd, project_key=cwd.replace("/", "-"))
-        _on_executive(ns)
+        _build_executive(cwd=cwd, project_key=cwd.replace("/", "-"))
     if cache.exists():
         sys.stdout.write(cache.read_text(encoding="utf-8"))
         return 0
@@ -1146,9 +1152,7 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--propose", action="store_true", help="propose feedback memories from the most recent session")
     dr.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of human-readable summary")
     dr.set_defaults(
-        func=lambda a: memdoctor.run(
-            argparse.Namespace(project=a.project, rules=a.rules, per_project=a.per_project, propose=a.propose, json=a.json)
-        )
+        func=lambda a: memdoctor.run(project=a.project, rules=a.rules, per_project=a.per_project, propose=a.propose, json=a.json)
     )
 
     op = sub.add_parser("on-precompact", help="hook: orchestrate PreCompact work")

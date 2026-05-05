@@ -11,7 +11,6 @@ https://github.com/millionco/claude-doctor
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import shutil
@@ -733,18 +732,25 @@ def _json_payload(report: dict, want_rules: bool) -> dict:
     return payload
 
 
-def run(args: argparse.Namespace) -> int:
-    if args.propose:
-        return propose_memories(project_filter=args.project)
-    report = _analyze(project_filter=args.project)
-    if args.json:
+def run(
+    *,
+    project: str | None = None,
+    rules: bool = False,
+    per_project: bool = False,
+    propose: bool = False,
+    json: bool = False,
+) -> int:
+    if propose:
+        return propose_memories(project_filter=project)
+    report = _analyze(project_filter=project)
+    if json:
         import json as _json
 
-        print(_json.dumps(_json_payload(report, want_rules=args.rules), indent=2))
+        print(_json.dumps(_json_payload(report, want_rules=rules), indent=2))
         return 0
-    if args.rules and args.per_project:
+    if rules and per_project:
         _print_rules_per_project(report)
-    elif args.rules:
+    elif rules:
         _print_rules(report)
     else:
         _print_summary(report)
