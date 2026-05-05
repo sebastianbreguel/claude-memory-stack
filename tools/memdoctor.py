@@ -308,21 +308,62 @@ def count_restart_clusters(starts: list[datetime]) -> int:
     return count
 
 
-def detect_negative_attribution(events: list[dict], session_id: str, conn: sqlite3.Connection) -> dict[str, int]:
-    """If `events` flag correction-heavy or rapid-corrections, return every topic
-    injected into this session_id (each topic counted once). Otherwise empty dict.
+# U6: severity ordering for max-severity aggregation. Higher rank wins.
+_SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
+_SEVERITY_WEIGHT = {"high": 2, "medium": 1, "low": 0}
 
-    Caller aggregates per-session dicts to get a project-wide implicated-session
-    count per topic.
+
+def _max_severity(*levels: str | None) -> str | None:
+    """Return the highest-rank severity among inputs (None values ignored)."""
+    best: str | None = None
+    for lvl in levels:
+        if lvl is None:
+            continue
+        if best is None or _SEVERITY_RANK.get(lvl, 0) > _SEVERITY_RANK.get(best, 0):
+            best = lvl
+    return best
+
+
+def _session_severity(events: list[dict]) -> str | None:
+    """Highest severity across all signals fired by this session, or None if
+    none of correction-heavy / rapid-corrections fired (those are the only
+    detectors that implicate injected memories)."""
+    flagged: list[str | None] = []
+    if detect_correction_heavy(events):
+        flagged.append(SIGNAL_INFO["correction-heavy"]["severity"])
+    if detect_rapid_corrections(events):
+        flagged.append(SIGNAL_INFO["rapid-corrections"]["severity"])
+    if not flagged:
+        return None
+    # Co-fired non-implicating signals still influence severity selection.
+    other = [
+        SIGNAL_INFO[name]["severity"]
+        for name, fn in (
+            ("error-loop", detect_error_loop),
+            ("keep-going-loop", detect_keep_going),
+        )
+        if fn(events)
+    ]
+    return _max_severity(*flagged, *other)
+
+
+def detect_negative_attribution(events: list[dict], session_id: str, conn: sqlite3.Connection) -> dict[str, str]:
+    """If `events` fire correction-heavy or rapid-corrections, return every topic
+    injected into this session_id mapped to the session's max-severity level.
+    Otherwise empty dict.
+
+    The severity-bearing return shape (topic → 'high'|'medium'|'low') feeds
+    `_analyze_attribution`, which aggregates the per-topic max severity across
+    all implicating sessions and the per-topic implicated-session count.
     """
-    flagged = bool(detect_correction_heavy(events) or detect_rapid_corrections(events))
-    if not flagged or not session_id:
+    severity = _session_severity(events)
+    if severity is None or not session_id:
         return {}
     try:
         rows = conn.execute("SELECT topic FROM injections WHERE session_id = ?", (session_id,)).fetchall()
     except sqlite3.OperationalError:
         return {}
-    return {r[0]: 1 for r in rows}
+    return {r[0]: severity for r in rows}
 
 
 def detect_signals(events: list[dict]) -> list[str]:
@@ -479,9 +520,10 @@ def _analyze(project_filter: str | None = None) -> dict:
     }
 
 
-def _analyze_attribution(project_filter: str | None = None, db_path: Path = MEMORY_DB) -> dict[str, int]:
-    """Walk sessions, return {topic: implicated_session_count} for memories
-    injected into sessions later flagged correction-heavy or rapid-corrections.
+def _analyze_attribution(project_filter: str | None = None, db_path: Path = MEMORY_DB) -> dict[str, dict]:
+    """Walk sessions, return {topic: {"count": N, "severity": "high|medium|low"}}
+    for memories injected into correction-heavy / rapid-corrections sessions.
+    Severity is the max across all implicating sessions for that topic (U6).
 
     Returns {} when memory.db is missing or the v3 `injections` table is absent
     (older DBs). Read-only on memory.db.
@@ -493,33 +535,64 @@ def _analyze_attribution(project_filter: str | None = None, db_path: Path = MEMO
     except sqlite3.OperationalError:
         return {}
     try:
-        accumulator: Counter[str] = Counter()
+        counts: Counter[str] = Counter()
+        severities: dict[str, str] = {}
         for _project, sid, events in _iter_sessions(project_filter):
             per_session = detect_negative_attribution(events, sid, conn)
-            accumulator.update(per_session)
-        return dict(accumulator)
+            for topic, sev in per_session.items():
+                counts[topic] += 1
+                severities[topic] = _max_severity(severities.get(topic), sev) or sev
+        return {topic: {"count": counts[topic], "severity": severities[topic]} for topic in counts}
     finally:
         conn.close()
 
 
-def _print_negative(attributions: dict[str, int]) -> None:
-    if not attributions:
+def _normalize_attributions(attributions: dict) -> dict[str, dict]:
+    """Accept legacy `dict[str, int]` (count-only, default severity 'medium')
+    or current `dict[str, dict]` (count + severity). Internal helper so callers
+    that still pass plain ints stay working — important since external tooling
+    consumes `_apply_negative_downweight` directly."""
+    out: dict[str, dict] = {}
+    for topic, val in attributions.items():
+        if isinstance(val, dict):
+            out[topic] = {"count": int(val.get("count", 0)), "severity": val.get("severity", "medium")}
+        else:
+            out[topic] = {"count": int(val), "severity": "medium"}
+    return out
+
+
+def _print_negative(attributions: dict) -> None:
+    norm = _normalize_attributions(attributions)
+    if not norm:
         print("engram doctor — no negative attributions detected.")
         return
     print("engram doctor — memories implicated in correction-flagged sessions:\n")
-    print(f"{'topic':40s}  implicated_sessions  status")
+    print(f"{'topic':40s}  sev     sessions  status")
     print("-" * 72)
-    ranked = sorted(attributions.items(), key=lambda kv: -kv[1])
-    for topic, count in ranked:
-        status = "PROPOSE" if count >= MIN_NEGATIVE_SESSIONS else "below-threshold"
-        print(f"{topic[:40]:40s}  {count:>19d}  {status}")
+    ranked = sorted(norm.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+    for topic, rec in ranked:
+        count, sev = rec["count"], rec["severity"]
+        weight = _SEVERITY_WEIGHT.get(sev, 0)
+        if count < MIN_NEGATIVE_SESSIONS:
+            status = "below-threshold"
+        elif weight == 0:
+            status = "skip(low)"
+        else:
+            status = f"PROPOSE(-{weight})"
+        print(f"{topic[:40]:40s}  {sev:6s}  {count:>8d}  {status}")
     print(f"\nThreshold: {MIN_NEGATIVE_SESSIONS} sessions. Use `engram doctor --propose --negative` to apply down-weights.")
 
 
-def _apply_negative_downweight(attributions: dict[str, int], db_path: Path = MEMORY_DB) -> int:
+def _apply_negative_downweight(attributions: dict, db_path: Path = MEMORY_DB) -> int:
     """Interactive: for each topic ≥ MIN_NEGATIVE_SESSIONS, prompt y/N and
-    decrement exposure_count by 1 (floor 0). Returns number of topics applied."""
-    eligible = [(t, n) for t, n in attributions.items() if n >= MIN_NEGATIVE_SESSIONS]
+    decrement exposure_count by the severity-derived weight (high=2, medium=1,
+    low=0 → skipped entirely). Floor at 0. Returns number of topics applied."""
+    norm = _normalize_attributions(attributions)
+    eligible = [
+        (topic, rec["count"], rec["severity"], _SEVERITY_WEIGHT.get(rec["severity"], 0))
+        for topic, rec in norm.items()
+        if rec["count"] >= MIN_NEGATIVE_SESSIONS and _SEVERITY_WEIGHT.get(rec["severity"], 0) > 0
+    ]
     if not eligible:
         print("No memories meet the negative-attribution threshold.")
         return 0
@@ -529,13 +602,13 @@ def _apply_negative_downweight(attributions: dict[str, int], db_path: Path = MEM
     conn = sqlite3.connect(str(db_path))
     applied = 0
     try:
-        print("Proposed down-weights (decrement exposure_count by 1, floor 0):\n")
-        for topic, n in sorted(eligible, key=lambda kv: -kv[1]):
-            ans = input(f"  [{n} sessions] {topic} — apply? [y/N] ").strip().lower()
+        print("Proposed down-weights (decrement weighted by severity, floor 0):\n")
+        for topic, n, sev, weight in sorted(eligible, key=lambda x: -x[1]):
+            ans = input(f"  [{n} sessions, {sev}, -{weight}] {topic} — apply? [y/N] ").strip().lower()
             if ans == "y":
                 conn.execute(
-                    "UPDATE memories SET exposure_count = MAX(0, exposure_count - 1) WHERE topic = ?",
-                    (topic,),
+                    "UPDATE memories SET exposure_count = MAX(0, exposure_count - ?) WHERE topic = ?",
+                    (weight, topic),
                 )
                 applied += 1
         conn.commit()
