@@ -1,228 +1,161 @@
-# karpathy-scout — claude-engram
+# karpathy-scout — sebastianbreguel/claude-engram
 
-> generated 2026-04-28 · `cwd=/Users/sebabreguel/personal/claude-engram` · graph: 346 nodes / 3419 edges / 14 source files
+_Run: 2026-05-05. Scope: pre-launch. Graph: 14 files, 346 nodes (Apr 28 stats), incrementally refreshed for current HEAD. Owner = solo dev pushing direct to main._
 
 ## shape & vibe
 
-| dim | value |
-|---|---|
-| total LOC (source) | ~6.7k |
-| tools (the product) | 4077 LOC across 4 files |
-| tests | ~2400 LOC across 4 files |
-| **runtime deps** | **0** (`dependencies = []` in pyproject) |
-| dev deps | `pytest`, `ruff` |
-| python floor | 3.12 |
-| logging module hits | 0 |
-| dataclass / TypedDict / Protocol | 0 |
-| argparse refs | 42 (concentrated in `engram.build_parser` + Namespace builders) |
-| `try/except` density | ~50 (mostly intentional non-blocking around fire-and-forget LLM calls) |
-| communities (graph) | 3 — tools (155), tests (165), demo-js (12). 0 cross-community edges |
-| top-3 large funcs | `memcapture.run` 190L · `MemoryDB.inject_context` 119L · `engram.build_parser` 99L |
+- **prod LOC (tools/)**: 4057 across 5 files. memcapture.py 1302, engram.py 1196, memdoctor.py 751, mempatterns.py 591, eval_corrections.py 217.
+- **test LOC**: 2394 (~0.6× prod). 4 test files, 132 tests passing per memory.
+- **prod deps**: zero. Stdlib + sqlite + `claude` CLI subprocess. Dev: pytest, ruff. *Already karpathy-shaped on the dependency axis.*
+- **ceremony density**: 0 ABCs, 0 dataclasses, 0 logging-module usage, 0 Pydantic. argparse: 24 hits (one CLI per tool). `try/except`: 121 hits (high; some defensive, sample below).
+- **architecture**: 3 communities (`tests-session` 165, `tools-detect` 155, `demo-wait` 12). **Zero cross-community edges, zero coupling warnings.** Loose coupling already real.
+- **recent direction**: last 10 commits dominated by *refactor: drop scaffolding / fakery / extract helper*. Owner is actively compressing.
 
-## karpathy diagnostic
+## karpathy diagnostic (60s read)
 
-ok this repo is already kind of embarrassing for a karpathy review in a good way. zero runtime deps. one single-file orchestrator (engram.py), three single-file tools, sqlite as the only side-channel, no docker, no MCP, no API keys, claude binary called via fire-and-forget subprocess. memory says 6 prior scout opps shipped/deferred and 3 of the last 4 commits literally delete scaffolding (`build_parser` / `main` / `__main__` from memcapture/mempatterns/memdoctor). the owner is doing the work. dependencies bad bad bad — there are none.
+ok so this codebase is already pretty karpathy. zero prod deps, no ABCs, no logging module, no pydantic, three loosely-coupled directory-communities with no cross-edges. that's good. owner just spent the last week doing exactly the work karpathy would do — killing argparse.Namespace fakery and `build_parser/main/__main__` boilerplate from memcapture and mempatterns, extracting `_Janitor` from MemoryDB. the bias is correct.
 
-so where's the meat. one place. **engram.py still pretends `memcapture.run(args: argparse.Namespace)` is the public API.** the recent refactor stripped the argparse front-door from memcapture but not the back-door it served. so engram.py builds a 19-field fake Namespace via `_memcap_ns(**overrides)` and hands it to `memcapture.run()`, which is a 190-line `if args.stats: ... elif args.query: ... elif args.recent: ...` dispatch. 13 call sites do this. it's a costume that nothing wears anymore. the natural next step in the arc the owner is already walking is: drop the costume, call functions directly. that's it. one proposal does ~70% of the remaining karpathy work on this codebase.
-
-i cannot simplify this any further is genuinely close. the table below has 4 rows; it is **not** padded. one is the load-bearing one (#1). the rest are smaller compressions.
+what's left? *the same refactor wasn't finished.* `memdoctor.run(args: argparse.Namespace)` still takes the namespace; `engram.py:1148` reconstructs one (`argparse.Namespace(project=a.project, rules=a.rules, per_project=a.per_project, propose=a.propose, json=a.json)`) just to pass it back. and `engram.py:727` builds another fake namespace inside `_preview` to call `_on_executive`. dead patterns walking. then `WikiWriter` has two ~70-line page writers (entity, pattern) that share the same parse-existing → merge → render-template structure — extractable into a tiny bacterial helper. and `inject_context` runs two SQL queries that differ only in WHERE/ORDER — unifiable. that's the residue. it's small. *i cannot simplify this any further* is close. don't pad. once the namespace finish-the-job lands, this repo is at lean baseline and further compression starts taxing clarity.
 
 ## owner / maintainer profile
 
-last 6 months of merged PRs (4 total — solo project, most work via direct push):
-
-| # | title | +/− | shape |
-|---|---|---|---|
-| 5 | pre-launch readiness — CONTRIBUTING + PR template + README badges | +105/−0 | docs/polish |
-| 4 | pre-launch trim: friction banner, **demos 7→1**, atomic exec cache | +1129/−77 | **delete-heavy / consolidation** |
-| 2 | regenerate centered demo GIFs | +1/−1 | ops |
-| 1 | center HyperFrames demo preview | +28/−9 | ops |
-
-direct-commit pattern (the actual signal): `refactor: drop redundant build_parser/main/__main__ scaffolding` (×3 tools), `refactor: extract _Janitor helper from MemoryDB`, `chore: bump python floor 3.11→3.12`, `perf: 8 latency wins on hot paths`, `feat: doctor --propose`, `cleanup: panel review fixes`. **strong delete/compress bias, anti-cosmetic, fast-merging.**
-
-memory flags: pre-launch — version bumps and tags off-limits; cosmetic refactors deferred post-launch. pushes direct to main. no PRs unless asked.
+- 50 commits total, 50 in last 6 months → all activity is recent
+- merged PRs: only 4 (#1, #2, #4, #5) — all shipped by codex agent on small CI/UX scope. **Solo dev pushes direct to main** (memory rule). Confidence in PRs as signal: *low*; better signal = direct commits.
+- recent direct-commit pattern (last 10): *refactor*, *refactor*, *docs*, *docs*, *refactor*, *refactor*, *refactor*, *refactor*, *chore*, *feat*. ~70% subtractive/compressive. Owner currently rewards: ceremony removal, scaffolding drops, helper extraction. Owner currently rejects: cosmetic-only refactors (deferred #15 split MemoryDB, #16 Hook classes per memory).
+- closed-unmerged: empty.
+- open PRs: empty (no WIP collisions).
+- **inferred bar**: aligned proposals = continue refactor sweep that's already in motion; misaligned = "let's split a 1200-line file because it's big" without a behavior justification.
 
 ## the table
 
-| # | proposal | filter | anchor | karpathy | maintainer | impact | effort | combined |
-|---|---|---|---|---|---|---|---|---|
-| 1 | drop `_memcap_ns` / `_patterns_ns` Namespace fakery; replace `memcapture.run(args)` with kwarg-based module functions (`memcapture.search(q)`, `memcapture.stats()`, etc.); collapse the 190-line if/elif dispatch | ceremony + first-order + compression | `tools/engram.py:38` (`_memcap_ns`) + `tools/memcapture.py:1089` (`run`) | 92 | 80 | High | M | 86 |
-| 2 | inline `_patterns_ns` into its single call site (or drop entirely after #1) | ceremony | `tools/engram.py:65` (`_patterns_ns`) + `tools/engram.py:1156` (only caller) | 70 | 80 | Low | S | 68 |
-| 3 | merge `_read_counter` / `_write_counter` / `_reset_counter` into one tiny module-level helper or one class — 3 funcs for a single int file is more chrome than content | bacterial / compression | `tools/engram.py:447-466` | 55 | 55 | Low | S | 53 |
-| 4 | review `MemoryDB.inject_context` (119 lines): is the `_fallback_inject` branch (54 lines) actually used in any test/path, or vestige of an earlier inject pipeline? if unused → delete | slop removal | `tools/memcapture.py:435` (`inject_context`) + `tools/memcapture.py:636` (`_fallback_inject`) | 60 | 70 | Medium | S–M | 64 |
+| # | Proposal | Filter | Kind | Anchor | Net LOC | Karpathy | Maintainer | Impact | Effort | Combined |
+|---|----------|--------|------|--------|---------|----------|------------|--------|--------|----------|
+| 1 | finish argparse.Namespace fakery removal: convert `memdoctor.run` to kwargs + drop the two Namespace shims in engram.py | ceremony | compress | tools/memdoctor.py:736 + tools/engram.py:727,1148 | −18 | 88 | 92 | Medium | S | 87 |
+| 2 | extract `_parse_md_section(content, header)` helper from `WikiWriter.write_entity_page` and `write_pattern_page` (template parsing duplicated) | bacterial | compress | tools/mempatterns.py:48-181 | −20 | 75 | 80 | Low | S | 70 |
+| 3 | unify `inject_context` two-SQL-path branch into one query with project-aware ORDER (or a single-pass python sort over rows) | compression | compress | tools/memcapture.py:471-508 | −18 | 70 | 55 | Medium | S | 64 |
+| 4 | audit `except Exception: pass` swallows in tools/ (121 try/except total; spot-checked engram.py:580 silently drops pattern errors) | slop | compress | tools/*.py (~6 sites est.) | −5 to −12 | 65 | 60 | Low | M | 56 |
 
-> 4/4 rows are subtractive. 100% deletion/compression. no additive proposals. that's the right shape for this repo today.
+four rows. all subtractive (kind=compress, all net LOC negative). subtractive ratio 100%, well above the 70% floor. no padding with additive proposals because there is no missing first-order term that justifies one — the codebase has the exec-cache, banner, doctor, patterns, eval already.
 
-> note: graph hub/bridge/knowledge-gap tools errored (`'NoneType' object has no attribute 'resolve'`) — likely a graph-state issue worth filing upstream to code-review-graph, but does not change conclusions: the architecture overview, communities, large-functions, and flows tools all worked, and serena grounded every anchor below.
+## per-opportunity detail
 
----
+### #1 — finish argparse.Namespace fakery removal
 
-## #1 — drop `_memcap_ns` / kwargs-not-Namespace + collapse `memcapture.run` dispatch
-
-**why karpathy would do it:** "the costume is louder than the body. you stripped `build_parser` and `main` from memcapture three commits ago — but `run(args: argparse.Namespace)` is still wearing argparse drag. nothing parses argv into that Namespace anymore. engram.py *fakes* one (19 default fields, set 1–3 of them, hand it back). that's not an API, that's a 13-call-site lie about what the function does. delete the lie. call functions."
+**why karpathy would do it:** "you started this. last week you killed exactly this pattern from memcapture and mempatterns. memdoctor still has it and engram.py is reconstructing namespaces just to pass them across module boundaries. dependencies bad bad bad — passing argparse.Namespace into another module's API makes that module depend on argparse for no reason. just take kwargs."
 
 **graph evidence:**
-- `tools/memcapture.py::run` — 190 lines (1089–1278), single-arg dispatch over `args.query`, `args.stats`, `args.recent`, `args.inject`, `args.banner`, `args.ingest_digest`, `args.ingest_snapshot`, `args.compactions`, `args.memories`, `args.forget`, plus capture-mode (`args.transcript` / `args.all`) — 11 mutually-exclusive branches.
-- `tools/engram.py::_memcap_ns` — 27 lines (38–63), 19 default fields. Sole purpose: feed `memcapture.run`.
-- 13 call sites in `engram.py` — confirmed via `find_referencing_symbols`:
-  - `_on_precompact:488`, `_run_llm:668`, `_on_executive:691`, `_forget:813`, `_on_session_start:1077`, `_on_session_start:1087` (×2), and 7 lambdas inside `build_parser` (1136, 1140, 1145, 1150, 1159, 1169, 1182).
-- Tests use subprocess against `engram` CLI, not direct calls to `memcapture.run` — refactor is opaque to the test suite (`tests/test_engram_cli.py`, `tests/test_e2e.py` both `subprocess.run`).
-- Communities: clean module separation already (`tools-detect` cohesion 0.16, 0 cross-community edges with tests/demo).
-
-**diff sketch:**
-
-`tools/memcapture.py`:
-```python
-# replace `def run(args, out=None, input_text=None, db=None) -> int:` (190 lines)
-# with small module-level functions, each one branch from the if/elif:
-
-def search(query: str, *, db: MemoryDB | None = None) -> int: ...        # ~10 lines
-def stats(*, db: MemoryDB | None = None) -> int: ...                      # ~25 lines
-def recent(n: int, *, db) -> int: ...                                     # ~6 lines
-def inject(project: str | None, *, db, out=None) -> int: ...              # ~3 lines
-def banner(project, name, *, db, out=None) -> int: ...                    # ~3 lines
-def ingest_digest(session_id, project, text, *, db) -> int: ...           # ~10 lines
-def ingest_snapshot(session_id, project, text, *, db) -> int: ...         # ~6 lines
-def compactions(filter_str, *, db) -> int: ...                            # ~12 lines
-def list_memories(pattern, *, db) -> int: ...                             # ~10 lines
-def forget(topic, *, ephemeral=False, db) -> int: ...                     # ~6 lines
-def capture(transcript=None, *, all=False, extract_facts=False, db) -> int: ...  # ~25 lines
-```
-
-each one opens its own `MemoryDB()` if `db is None` (extract a tiny `@contextmanager _opt_db(db)` if needed — or just dup the 3-line owns_db pattern). total: ~115 lines of small functions vs. 190-line monolithic dispatch. **net: −75 lines in memcapture.py.**
-
-`tools/engram.py`:
-```python
-# delete _memcap_ns (lines 38-63, -27 lines)
-
-# rewrite call sites (representative):
-- memcapture.run(_memcap_ns(transcript=str(transcript)))
-+ memcapture.capture(transcript=str(transcript))
-
-- memcapture.run(_memcap_ns(stats=True))
-+ memcapture.stats()
-
-- memcapture.run(_memcap_ns(query=a.query))
-+ memcapture.search(a.query)
-
-- memcapture.run(_memcap_ns(inject=True, inject_project=project_key or None), out=buf, db=shared_db)
-+ memcapture.inject(project_key or None, out=buf, db=shared_db)
-
-- memcapture.run(_memcap_ns(**{cfg["ingest"]: True, "session_id": args.session_id, "project": args.project}), input_text=output)
-+ # _run_llm: replace dict-keyed ingest dispatch with a small if/elif on cfg["ingest"]:
-+ if cfg["ingest"] == "ingest_digest":
-+     memcapture.ingest_digest(args.session_id, args.project, output)
-+ else:
-+     memcapture.ingest_snapshot(args.session_id, args.project, output)
-```
-
-**combined net:** −27 (drop `_memcap_ns`) + −75 (collapse dispatch) + ~−5 across cleaner call sites ≈ **−105 to −115 lines, zero behavior change**. and the code finally says what it does.
-
-**e2e test plan:**
-1. preconditions: `~/.claude/memory.db` present (or recreated by `MemoryDB()`); transcript fixtures already used by `tests/test_e2e.py`.
-2. trigger: `uv run pytest -q` — the existing 600+ tests across `test_e2e.py` (subprocess against engram CLI), `test_engram_cli.py` (subprocess), `test_memdoctor.py`, `test_mempatterns.py`.
-3. expected: all green unchanged. tests use subprocess invocation of `engram <subcommand>`, so they exercise the new direct-call path automatically.
-4. regression check: smoke run hooks manually:
-   - `uv run tools/engram.py on-session-start <<< '{}'` → JSON output well-formed
-   - `uv run tools/engram.py stats` → expected counters
-   - `uv run tools/engram.py search test` → no crash
-5. tooling: pytest already in CI (.github/workflows). no new infra.
-6. manual verification cmd:
-   ```bash
-   ./install.sh && uv run pytest -q && \
-     uv run tools/engram.py stats && \
-     uv run tools/engram.py memories
-   ```
-
-**maintainer note:** the owner shipped 3 PRs in the last week of *this exact arc* (`drop redundant build_parser/main/__main__ scaffolding` × 3). this proposal completes that arc. expected: high-confidence merge. only friction is the M-effort scope (touches one file's public surface + 13 call sites in another). bundle as a single PR — not a series — because the API change and the call-site updates need to land together.
-
----
-
-## #2 — inline (or drop) `_patterns_ns`
-
-**why karpathy would do it:** "you have one caller. write the namespace inline. or after #1, just call `mempatterns.update_now()` / `mempatterns.report_now()` directly."
-
-**graph evidence:**
-- `tools/engram.py::_patterns_ns` — 13 lines (65–75).
-- 1 caller: `build_parser:1156` (`mempatterns.run(_patterns_ns(update=a.update, status=a.status, report=a.report))`).
-
-**diff sketch:** delete `_patterns_ns`. either inline at the lambda (`argparse.Namespace(update=a.update, ...)`), or — better — add `def update(...)`, `def status()`, `def report()` to `mempatterns.py` and bypass the namespace entirely (rhymes with #1).
-
-**e2e test plan:** `uv run pytest tests/test_mempatterns.py` plus `uv run tools/engram.py patterns --status` and `--update`. existing tests cover orchestrator paths.
-
-**maintainer note:** trivial. would be a sub-PR or part of #1.
-
----
-
-## #3 — collapse the 3-function counter helper
-
-**why karpathy would do it:** "three module-level functions to read, write, reset a single int from one file. that's chrome. one helper class with `.read() / .bump() / .reset()` or even just two functions. or inline since the only caller is `_on_precompact`."
-
-**graph evidence:**
-- `tools/engram.py::_read_counter` (447–456), `_write_counter` (457–463), `_reset_counter` (464–469). 17 lines combined.
-- callers concentrated in `_on_precompact` (the only place compaction count is mutated).
+- `memdoctor.run(args: argparse.Namespace)` at tools/memdoctor.py:736 — only consumes `args.project, args.rules, args.per_project, args.propose, args.json`
+- `engram.py:1148-1152` — `lambda a: memdoctor.run(argparse.Namespace(project=a.project, rules=a.rules, per_project=a.per_project, propose=a.propose, json=a.json))` (4 lines reconstructing what was just decomposed)
+- `engram.py:727` — `ns = argparse.Namespace(cwd=cwd, project_key=cwd.replace("/", "-")); _on_executive(ns)` inside `_preview`
+- impact radius (memdoctor.py + engram.py): 214 impacted nodes within 2 hops, but the actual API surface change is local — only `engram.py` calls `memdoctor.run` from outside, and `_preview` is the only non-CLI caller of `_on_executive`
 
 **diff sketch:**
 ```python
-# replace 3 funcs (17 lines) with one tiny class:
-class CompactionCounter:
-    def __init__(self): self.path = Path.home() / ".claude" / "engram" / "compactions.json"
-    def read(self) -> tuple[str, int]: ...   # 6 lines
-    def bump(self, sid: str) -> None: ...    # 4 lines
-    def reset(self) -> None: ...             # 2 lines
+# memdoctor.py
+def run(*, project: str | None = None, rules: bool = False,
+        per_project: bool = False, propose: bool = False, json: bool = False) -> int: ...
+
+# engram.py:1148
+dr.set_defaults(func=lambda a: memdoctor.run(
+    project=a.project, rules=a.rules, per_project=a.per_project,
+    propose=a.propose, json=getattr(a, "json", False),
+))
+
+# engram.py:727 — split _on_executive into a kwarg-pure body + a Namespace-thin wrapper
+def _build_executive(*, cwd: str, project_key: str) -> int: ...
+def _on_executive(args): return _build_executive(cwd=args.cwd, project_key=args.project_key)
+# _preview now: _build_executive(cwd=cwd, project_key=cwd.replace("/", "-"))
 ```
-or inline reads/writes directly into `_on_precompact` since it is the only mutator.
-
-**effort/impact:** small win, low impact.
-
-**maintainer note:** marginal. not urgent. include only if bundled with #1 to avoid PR proliferation.
-
----
-
-## #4 — verify `_fallback_inject` is still reachable; if dead, delete
-
-**why karpathy would do it:** "`MemoryDB.inject_context` is 119 lines. it has a normal path *and* a `_fallback_inject` arm at 54 lines. if the fallback never fires in practice, that's 54 lines of code defending against a ghost. read the call graph, prove it triggers, or delete."
-
-**graph evidence:**
-- `tools/memcapture.py::MemoryDB.inject_context` — 119 lines (435–553).
-- `tools/memcapture.py::MemoryDB._fallback_inject` — 54 lines (636–689).
-- need: trace whether the conditional that selects `_fallback_inject` over the snapshot-based path is reachable in current SessionStart flows.
-
-**diff sketch:** read `inject_context` end-to-end, identify the conditional, prove via tests + manual probe whether the fallback is dead. if dead → delete `_fallback_inject` + the conditional. if alive but rare → keep, but add a one-line comment with the *triggering condition* (cheap, prevents future scout from re-flagging).
 
 **e2e test plan:**
-1. add a temporary log line in `_fallback_inject` (`_log_warning("fallback_inject hit")`).
-2. run full test suite: `uv run pytest -q` — does the log line ever fire?
-3. run `engram on-session-start` against a few real `~/.claude/projects/*/` dirs — does it fire there?
-4. if neither: delete and ship.
-5. revert the log line either way.
+1. preconditions: existing 132 tests, no new env
+2. trigger: `uv run pytest`
+3. expected: all green (memdoctor tests already construct Namespaces; either update them to kwargs or keep a thin Namespace wrapper around the kwarg fn for back-compat in tests)
+4. manual: `engram doctor --rules`, `engram doctor --json`, `engram doctor --propose`, `engram preview --cwd $PWD` — outputs unchanged
+5. tooling: pytest + ruff already in CI
 
-**maintainer note:** lower karpathy score because the work is investigative before it's deletive — but if fallback is dead, this is a pure −54 line win with zero behavior change.
+**maintainer note:** STRONGLY ALIGNED. Owner shipped this exact refactor for memcapture (de0e0dc) and the three sibling tools' `build_parser/main/__main__` drops (8d40f14, 330c68e, 1d919ec) in the last week. memdoctor was the one that didn't get the kwargs treatment because it has its own `build_parser/main/__main__` still in use; the kwargs split is the next chip. Confidence: very high.
+
+---
+
+### #2 — extract `_parse_md_section` helper from `WikiWriter`
+
+**why karpathy would do it:** "two functions, both ~70 lines, both do `if page_path.exists(): parse known-headers, accumulate; else: defaults`. that pattern is bacterial — small, modular, copy-pasteable into a one-liner. extract it once, both writers shrink. don't extract a class. don't extract an ABC. one function. small."
+
+**graph evidence:**
+- `write_entity_page` (mempatterns.py:48-118): parses `first_seen`, `## Co-edited with` items, `## Common errors` items
+- `write_pattern_page` (mempatterns.py:120-181): parses `first_detected`, `## History` items
+- both follow: read text → regex frontmatter scalar → walk lines collecting bullets under known H2 → merge → re-render. textbook duplication
+
+**diff sketch:**
+```python
+def _parse_md_bullets(content: str, header: str) -> list[str]:
+    out, in_section = [], False
+    for line in content.splitlines():
+        if line.strip() == header: in_section = True; continue
+        if in_section:
+            if line.startswith("## "): break
+            if line.startswith("- "): out.append(line[2:])
+    return out
+
+def _parse_frontmatter_scalar(content: str, key: str, default: str) -> str:
+    m = re.search(rf"{key}:\s*(\S+)", content)
+    return m.group(1) if m else default
+```
+Both writers collapse their existing-page branch by ~10 lines each.
+
+**e2e test plan:**
+1. existing `tests/test_mempatterns.py` covers entity-page merge, pattern-page history, first-detected preservation — all hit the parse paths
+2. trigger: `uv run pytest tests/test_mempatterns.py`
+3. expected: green unchanged
+
+**maintainer note:** ALIGNED. Owner did `_Janitor` extract from MemoryDB (e034ffe) — same shape (private helper for repeated parse logic). Lower-priority than #1 because mempatterns isn't in the active refactor sweep this week.
 
 ---
 
-## also-considered, dropped
+### #3 — unify `inject_context` two-SQL-path branch
 
-these were generated during the lens scan but did not survive:
+**why karpathy would do it:** "two SELECTs that differ only in `LEFT JOIN sessions` + `CASE WHEN s.project LIKE` + extra ORDER column. that's not two queries. that's one query where the project case is a parameterized score component. half the SQL real estate is paying for the branch."
 
-| proposal | why dropped |
-|---|---|
-| split `engram.py` (1243 LOC) into `hooks.py` + `cli.py` + `cache.py` | memory says #16 deferred as cosmetic post-launch; owner's stated preference is **anti-cosmetic refactor pre-launch** — wait |
-| split `memcapture.py` (1279 LOC) along `MemoryDB` / `TranscriptParser` / cli seam | memory says #15 deferred; same reason |
-| drop argparse, switch to bare module-level config + sys.argv parsing | argparse already in stdlib, 10+ subcommands warrant it; the Poor Man's Configurator filter doesn't fire for a CLI of this fan-out |
-| add type hints to all DB methods | **anti-proposal.** karpathy doesn't ask for type ceremony in research code; this isn't research code but it doesn't matter — adds nothing and the codebase is already legible |
-| add `@dataclass` to `SessionData` | already simple, current shape is fine; dataclass would add ceremony |
-| add a logging module | repo deliberately uses `_log_warning` (8-line append-to-file). adding `logging.getLogger` would be a regression |
-| compress `_create_tables` (83 lines of SQL DDL) | SQL DDL is already as compact as SQL gets. don't compress |
-| compress `_extract_chunk` (98 lines) | this is the **first-order term** for fact extraction. mass is well-spent |
-| compress `_on_session_start` (87 lines) | already optimized — see commit `68c2529` ("8 latency wins on hot paths"). leave |
+**graph evidence:**
+- `MemoryDB.inject_context` tools/memcapture.py:471-589 (119 lines, biggest function)
+- lines 482-508: 27 lines of duplicated SELECT scaffolding for the project-vs-no-project branch
+
+**diff sketch:** always select with `LEFT JOIN sessions`, parameterize the `CASE WHEN project IS NULL OR durability='durable' THEN 1 ELSE LIKE-match END` with a sentinel `'%'` when project is None. Or: do one unconditional fetch and let python sort by `(durable_or_project_match desc, score desc)`. Both shave ~18 LOC.
+
+**e2e test plan:**
+1. existing `tests/test_e2e.py::test_project_scoped_inject_surfaces_handoff` and `test_inject_includes_active_patterns` cover both branches
+2. trigger: `uv run pytest tests/test_e2e.py -k inject`
+3. risk: SQL clarity — if the unified query becomes harder to read than the branch, abort. measure twice
+
+**maintainer note:** NEUTRAL → ALIGNED. SQL-readability sensitivity is per-call; owner already added pyproject `E501` exemptions for SQL strings, signaling SQL clarity is valued over line-count compression. Score is honest: lower confidence than #1/#2.
 
 ---
+
+### #4 — audit defensive `except Exception: pass` swallows
+
+**why karpathy would do it:** "121 try/except in 4057 LOC is high. some are real (SessionStart hook must not crash on schema-version refusal — that's intentional, lines 1006-1041). but `inject_context` line 580 silently swallows every error from `_read_active_patterns` — what's that protecting against? if the patterns wiki dir has bad permissions you want to know, not silently lose your patterns banner. spot-audit, keep the load-bearing ones, delete the slop."
+
+**graph evidence:** spot sample
+- `tools/memcapture.py:576-581`: `try: patterns = self._read_active_patterns(); ... except Exception: pass` — silent swallow
+- `tools/engram.py:988-991, 1001-1004`: `try: payload = json.loads(raw) except Exception: payload = {}` — bare-except where `json.JSONDecodeError` would do
+- `tools/engram.py:1014-1041`: schema-error catch chain — load-bearing (intentional, documented)
+
+**diff sketch:** narrow `except Exception` → `except (json.JSONDecodeError, OSError)` etc. delete pure pass-swallows where the surrounding code already runs in a hook with its own outer guard.
+
+**e2e test plan:** narrow scope; tests should be unaffected. risk: introducing real exceptions in code paths that weren't previously surfaced. needs careful per-site judgment, hence Effort=M.
+
+**maintainer note:** NEUTRAL. Owner has not done this kind of audit recently; it's slow per-site work and easy to break SessionStart-style critical paths. Honest read: low priority unless paired with a specific friction signal from `engram doctor`.
+
+## what's NOT in the table (and why)
+
+- **split memcapture.py 1302 / engram.py 1196 / MemoryDB into modules** — DEFERRED per memory (`feedback_cosmetic_refactors.md`). Cosmetic L-effort. Owner explicitly said no until post-launch. Karpathy might agree-skip too: 3 communities, 0 cross-edges, file size alone ≠ split.
+- **pure-additive features** (new doctor signals, new banner panes, telemetry, etc.) — no first-order term currently missing. claude-engram already does capture, inject, patterns, doctor, eval-corrections, exec-summary, snapshot. adding more = pre-launch noise. compression is the move.
+- **drop a dep** — already 0 deps. nothing to drop.
+- **type-hint expansion / ABC introduction / dependency-injection** — anti-proposals.
 
 ## summary
 
-three lines, terse, max one karpathy quote:
-
-1. **diagnostic:** zero runtime deps, three modules, owner is already deleting on the karpathy beat — only one structural smell remains: the 19-field argparse.Namespace fakery between engram.py and memcapture.run, which is "the costume the body stopped wearing."
-2. **top-3 by combined rank:** #1 drop `_memcap_ns` + collapse `memcapture.run` dispatch (combined 86, ~−110 LOC) — #4 verify+delete `_fallback_inject` (combined 64, possibly −54 LOC) — #2 inline `_patterns_ns` (combined 68, trivial).
-3. **report path:** `karpathy-scout-sebastianbreguel-claude-engram.md` (cwd).
+- **diagnostic**: claude-engram is already lean. four small subtractive opportunities remain, total ~−61 LOC. once #1 ships the codebase is at karpathy-baseline pre-launch.
+- **top-3 by combined**: (1) finish Namespace-fakery removal (87), (2) WikiWriter `_parse_md_bullets` helper (70), (3) inject_context SQL unify (64).
+- **report path**: `karpathy-scout-sebastianbreguel-claude-engram.md`
