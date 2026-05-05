@@ -118,7 +118,7 @@ class _Janitor:
 class MemoryDB:
     """SQLite-backed session memory store with FTS5 search."""
 
-    LATEST_SCHEMA_VERSION: ClassVar[int] = 3
+    LATEST_SCHEMA_VERSION: ClassVar[int] = 4
 
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
@@ -190,14 +190,21 @@ class MemoryDB:
 
             CREATE TABLE IF NOT EXISTS memories (
                 id INTEGER PRIMARY KEY,
-                topic TEXT NOT NULL UNIQUE,
+                topic TEXT NOT NULL,
                 content TEXT NOT NULL,
                 durability TEXT NOT NULL CHECK(durability IN ('durable', 'ephemeral')),
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 last_accessed TEXT NOT NULL DEFAULT (datetime('now')),
                 source_session TEXT,
-                exposure_count INTEGER NOT NULL DEFAULT 0
+                exposure_count INTEGER NOT NULL DEFAULT 0,
+                why TEXT,
+                where_ctx TEXT,
+                learned TEXT,
+                superseded_by INTEGER REFERENCES memories(id)
             );
+            -- idx_memories_topic_current (partial unique on superseded_by IS NULL)
+            -- is created in the v4 migration block; placing it here would fail
+            -- on pre-v4 DBs where superseded_by doesn't exist yet.
             CREATE INDEX IF NOT EXISTS idx_memories_durability ON memories(durability);
             CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed DESC);
             CREATE INDEX IF NOT EXISTS idx_memories_source_session ON memories(source_session);
@@ -267,6 +274,60 @@ class MemoryDB:
                 "PRIMARY KEY (session_id, topic))"
             )
             self.conn.execute("PRAGMA user_version = 3")
+            self.conn.commit()
+
+        if version < 4:
+            # v4: structured memory fields + supersede FK.
+            # Drop column-level UNIQUE on `topic` (blocks supersede chains where
+            # multiple rows share a topic). SQLite cannot DROP an implicit unique
+            # index, so we rebuild the memories table per the standard recipe,
+            # then add the new columns + a partial unique index that enforces
+            # uniqueness only on currently-active rows (superseded_by IS NULL).
+            #
+            # Skip the rebuild on fresh DBs where _create_tables already produced
+            # the v4 shape — only the partial unique index is missing.
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(memories)").fetchall()}
+            if "superseded_by" in cols:
+                self.conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_topic_current ON memories(topic) WHERE superseded_by IS NULL"
+                )
+                self.conn.execute("PRAGMA user_version = 4")
+                self.conn.commit()
+                return
+            self.conn.executescript("""
+                PRAGMA foreign_keys = OFF;
+                BEGIN;
+                CREATE TABLE memories_v4 (
+                    id INTEGER PRIMARY KEY,
+                    topic TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    durability TEXT NOT NULL CHECK(durability IN ('durable', 'ephemeral')),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    last_accessed TEXT NOT NULL DEFAULT (datetime('now')),
+                    source_session TEXT,
+                    exposure_count INTEGER NOT NULL DEFAULT 0,
+                    why TEXT,
+                    where_ctx TEXT,
+                    learned TEXT,
+                    superseded_by INTEGER REFERENCES memories_v4(id)
+                );
+                INSERT INTO memories_v4
+                    (id, topic, content, durability, created_at, last_accessed,
+                     source_session, exposure_count)
+                SELECT id, topic, content, durability, created_at, last_accessed,
+                       source_session, exposure_count
+                FROM memories;
+                DROP TABLE memories;
+                ALTER TABLE memories_v4 RENAME TO memories;
+                CREATE INDEX idx_memories_durability ON memories(durability);
+                CREATE INDEX idx_memories_last_accessed ON memories(last_accessed DESC);
+                CREATE INDEX idx_memories_source_session ON memories(source_session);
+                CREATE UNIQUE INDEX idx_memories_topic_current
+                    ON memories(topic) WHERE superseded_by IS NULL;
+                COMMIT;
+                PRAGMA foreign_keys = ON;
+            """)
+            self.conn.execute("PRAGMA user_version = 4")
             self.conn.commit()
 
     def _content_hash(self, content: str) -> str:
@@ -757,10 +818,14 @@ class MemoryDB:
         durability: str,
         source_session: str | None = None,
     ) -> None:
+        # ON CONFLICT target matches the partial unique index
+        # (idx_memories_topic_current). U3 replaces this with supersede-aware
+        # logic; until then, behavior is the same as v3 — overwrite-in-place
+        # on the currently-active row.
         self.conn.execute(
             """INSERT INTO memories (topic, content, durability, source_session)
                VALUES (?, ?, ?, ?)
-               ON CONFLICT(topic) DO UPDATE SET
+               ON CONFLICT(topic) WHERE superseded_by IS NULL DO UPDATE SET
                    content = excluded.content,
                    durability = excluded.durability,
                    last_accessed = datetime('now'),
