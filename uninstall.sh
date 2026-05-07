@@ -24,7 +24,7 @@ rm -f "$CLAUDE_DIR/hooks/memdigest-hook.sh"
 rm -f "$CLAUDE_DIR/hooks/memcompact-hook.sh"
 rm -f "$CLAUDE_DIR/hooks/mempatterns-hook.sh"
 rm -rf "$CLAUDE_DIR/skills/reflect"
-rm -rf "$CLAUDE_DIR/skills/patterns"
+rm -rf "$CLAUDE_DIR/skills/patterns"  # legacy, may not exist
 echo "  Removed tools and skills."
 
 echo "[2/3] Removing hook configuration..."

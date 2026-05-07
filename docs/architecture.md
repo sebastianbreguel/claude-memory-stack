@@ -20,8 +20,7 @@ claude-engram is a Claude Code plugin with **three hooks, one Python entrypoint*
 │   └── memdoctor.py             # Friction signal detector (correction-heavy, error-loop, restart-cluster, ...)
 │
 └── skills/
-    ├── reflect/SKILL.md         # /reflect — memory consolidation + advisory rule proposals
-    └── patterns/SKILL.md        # /patterns — browse the wiki
+    └── reflect/SKILL.md         # /reflect — memory consolidation + advisory rule proposals
 ```
 
 ## Hook wiring
@@ -133,7 +132,7 @@ PRAGMA busy_timeout = 5000;            -- collision absorber
 7. **Collision absorber, not coordination** — two PreCompact hooks racing on the same session are absorbed by `PRAGMA busy_timeout=5000` + `UNIQUE(topic)`. No lockfile, no coordinator. Cost: occasional redundant Sonnet call.
 8. **Schema baseline stamped at `user_version=1`** — columns live in `CREATE TABLE IF NOT EXISTS`. Future typed constraints hook into a `PRAGMA user_version` migration ladder.
 9. **Patterns runs on previous session's memories** — PreCompact order is: capture (sync) → digest (async) → patterns (sync). Patterns reflect what the last compaction wrote, not this one. By design.
-10. **Advisory skills** — `/reflect` consolidates memory (writes) and proposes CLAUDE.md rules (advisory); `/patterns` is read-only. CLAUDE.md is never auto-written.
+10. **Advisory skills** — `/reflect` consolidates memory (writes) and proposes CLAUDE.md rules (advisory). CLAUDE.md is never auto-written.
 11. **Idempotent install** — re-running `install.sh` strips legacy `.sh` hook entries from `settings.json` and reinstalls the unified `engram.py` hooks. `memory.db` and `patterns/` are preserved.
 
 ## Why one entrypoint

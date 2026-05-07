@@ -91,7 +91,6 @@ echo '{"session_id":"abc","cwd":"/path/to/project"}' | \
 | Command | What it does |
 |---|---|
 | `/reflect`  | Consolidate memory files (writes) + propose CLAUDE.md rules (advisory) from recent sessions |
-| `/patterns` | Browse the `~/.claude/patterns/` wiki from inside Claude Code |
 
 ## Token budget
 
@@ -106,7 +105,6 @@ echo '{"session_id":"abc","cwd":"/path/to/project"}' | \
 | `on-user-prompt` digest + executive | ~2-5K input | Every 25 prompts, detached Sonnet 4.6 |
 | `on-precompact` patterns | 0 | Background, no LLM |
 | `/reflect`  | ~900 | Only when invoked |
-| `/patterns` | ~300 | Only when invoked |
 | **Ambient total** | **~350** | **Per session** |
 
 ## Manual install
@@ -123,7 +121,6 @@ chmod +x ~/.claude/tools/engram.py
 
 # Copy skills
 cp -r skills/reflect   ~/.claude/skills/
-cp -r skills/patterns  ~/.claude/skills/
 ```
 
 Then add these two hooks to `~/.claude/settings.json`:

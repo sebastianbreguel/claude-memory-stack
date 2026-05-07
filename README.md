@@ -28,7 +28,7 @@ Three bullets, zero latency. The merge (recap + memory + patterns) happens in th
 | **Preferences** | How you like to work | *"uses uv, not pip · responds in Spanish"* | Forever |
 | **Patterns** | How you actually work | *files always edited together, recurring errors* | Updated on each session |
 
-Handoffs and preferences are the core — they inject automatically on every session start. Patterns are a bonus: an Obsidian-compatible wiki in `~/.claude/patterns/` that detects file co-edits, recurring errors, and tool habits from your history. Browse it, ignore it, or use `/patterns` inside Claude Code to explore.
+Handoffs and preferences are the core — they inject automatically on every session start. Patterns are a silent bonus: an Obsidian-compatible wiki in `~/.claude/patterns/` updated in the background. Browse it or ignore it.
 
 ## How it works
 
@@ -113,14 +113,14 @@ Full reference: [docs/cli-reference.md](docs/cli-reference.md).
 
 ## Optional: pattern detection
 
-claude-engram detects emergent patterns from your session history — file pairs you always edit together, recurring errors, and tool habits. Patterns are stored as an Obsidian-compatible wiki in `~/.claude/patterns/`.
+claude-engram silently detects emergent patterns from your session history — file pairs you always edit together, recurring errors, and tool habits. Stored as an Obsidian-compatible wiki in `~/.claude/patterns/`. Open it in Obsidian or ignore it; nothing changes if you do.
 
 ```bash
 uv run ~/.claude/tools/engram.py patterns --report   # detected patterns
 uv run ~/.claude/tools/engram.py patterns --status   # wiki stats
 ```
 
-Use `/patterns` inside Claude Code to explore. Add substrings to `~/.claude/patterns/.ignore` to exclude noisy projects.
+Add substrings to `~/.claude/patterns/.ignore` to exclude noisy projects.
 
 ## Per-project scoping
 
