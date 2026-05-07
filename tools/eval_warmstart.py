@@ -110,6 +110,9 @@ def _candidate_sessions(db_path: Path, n: int, seed: int | None = None) -> list[
     """Sample `n` sessions that have a real transcript and ≥1 prior memory for the project."""
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+    # Deterministic SQL order (session_id ASC) + Python-seeded shuffle.
+    # SQLite's ORDER BY RANDOM() is not seedable, so pull a bounded ordered
+    # pool then shuffle in Python — same seed = same sample, always.
     rows = conn.execute(
         """
         SELECT s.session_id, s.project, s.transcript_path, s.message_count, s.captured_at
@@ -124,17 +127,14 @@ def _candidate_sessions(db_path: Path, n: int, seed: int | None = None) -> list[
                 AND m.created_at < s.captured_at
                 AND (m.durability = 'durable' OR s2.project = s.project)
           )
-        ORDER BY RANDOM()
-        LIMIT ?
+        ORDER BY s.session_id
         """,
-        (n * 4,),  # over-sample; transcript may be missing on disk
     ).fetchall()
     conn.close()
 
-    if seed is not None:
-        random.seed(seed)
-        rows = list(rows)
-        random.shuffle(rows)
+    rows = list(rows)
+    rng = random.Random(seed)
+    rng.shuffle(rows)
 
     out: list[dict] = []
     for row in rows:
@@ -151,6 +151,13 @@ def _evaluate_session(session: dict, db: memcapture.MemoryDB, first: int, thresh
     Uses session.captured_at as historical cutoff so the simulated inject only
     sees memories that existed before this session was captured. Approximation —
     captured_at is post-session, but strictly closer to T=0 than current state.
+
+    Does NOT pass `query` to inject_context — passing the user message as query
+    makes the rerank bias the inject toward the user's tokens, then we measure
+    overlap between user tokens and inject tokens. That's circular: it measures
+    rerank success, not whether the inject covered things the user later
+    mentioned. SessionStart inject in real sessions is also query-less (the user
+    hasn't typed yet), so query=None matches real T=0 behavior.
     """
     inject_text = db.inject_context(
         project=session["project"],

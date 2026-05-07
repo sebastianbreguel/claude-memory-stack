@@ -610,6 +610,11 @@ class MemoryDB:
         if cutoff_ts is None:
             self._cleanup_ephemeral_daily()
 
+        # A/B counterfactual: ENGRAM_RERANK=off disables query-aware rerank.
+        # Used by eval_warmstart to measure whether U4 rerank moves the needle.
+        if os.environ.get("ENGRAM_RERANK", "").lower() == "off":
+            query = None
+
         tokens = _tokenize_query(query)
         if tokens:
             # Per token: topic(5) + content(3) + why/where_ctx/learned(2 each).

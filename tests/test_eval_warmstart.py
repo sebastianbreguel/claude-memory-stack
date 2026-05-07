@@ -133,6 +133,42 @@ def test_inject_context_cutoff_filters_post_cutoff_memories(tmp_path):
         db.close()
 
 
+def test_inject_context_engram_rerank_off_disables_query(tmp_path, monkeypatch):
+    """ENGRAM_RERANK=off must change inject ordering when memories compete on relevance."""
+    import sys
+
+    sys.path.insert(0, str(REPO / "tools"))
+    import memcapture as mc
+
+    db_path = tmp_path / "memory.db"
+    db = mc.MemoryDB(db_path=db_path)
+    try:
+        # Match memory has token "FTS5" matching the query; older but query-aware should rank it first.
+        db.conn.execute(
+            "INSERT INTO memories (topic, content, durability, created_at, last_accessed) VALUES (?, ?, ?, ?, ?)",
+            ("match", "FTS5 reranking notes", "durable", "2024-01-01", "2024-01-01"),
+        )
+        # Recent unrelated memory; should win on recency when rerank disabled.
+        db.conn.execute(
+            "INSERT INTO memories (topic, content, durability, created_at, last_accessed) VALUES (?, ?, ?, ?, ?)",
+            ("recent", "unrelated docker compose tips", "durable", "2026-04-01", "2026-04-01"),
+        )
+        db.conn.commit()
+
+        monkeypatch.delenv("ENGRAM_RERANK", raising=False)
+        on = db.inject_context(query="FTS5", cutoff_ts="2026-05-01")
+
+        monkeypatch.setenv("ENGRAM_RERANK", "off")
+        off = db.inject_context(query="FTS5", cutoff_ts="2026-05-01")
+
+        # With rerank ON, the FTS5-match memory should outrank the recent one.
+        assert on.find("FTS5 reranking") < on.find("docker compose")
+        # With rerank OFF, recency wins — recent memory appears first.
+        assert off.find("docker compose") < off.find("FTS5 reranking")
+    finally:
+        db.close()
+
+
 def test_inject_context_cutoff_is_read_only(tmp_path):
     """cutoff_ts mode must not bump last_accessed or insert into injections."""
     import sys
