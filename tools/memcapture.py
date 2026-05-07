@@ -592,16 +592,23 @@ class MemoryDB:
         project: str | None = None,
         session_id: str | None = None,
         query: str | None = None,
+        cutoff_ts: str | None = None,
     ) -> str:
         """Generate ~350 token context block from learned memories + optional compaction snapshot.
 
         When `query` is provided, memories are reranked by per-token LIKE matches
         across topic/content/why/where_ctx/learned (weights 5/3/2/2/2). Recency +
         reinforcement remain the secondary tiebreakers.
+
+        When `cutoff_ts` is provided (eval/replay), only memories created strictly
+        before that ISO timestamp are eligible, the call is read-only (no
+        last_accessed bump, no injection log, no daily cleanup). Used by
+        eval_warmstart to simulate inject as it would have been at session T=0.
         """
         # cleanup_ephemeral runs at most once per day via mtime-guard on a marker
-        # file — avoids a DELETE on every SessionStart.
-        self._cleanup_ephemeral_daily()
+        # file — avoids a DELETE on every SessionStart. Skip in cutoff (read-only) mode.
+        if cutoff_ts is None:
+            self._cleanup_ephemeral_daily()
 
         tokens = _tokenize_query(query)
         if tokens:
@@ -623,6 +630,9 @@ class MemoryDB:
             qscore_expr = "0"
             qscore_params = []
 
+        cutoff_clause = " AND m.created_at < ?" if cutoff_ts else ""
+        cutoff_params: list[str] = [cutoff_ts] if cutoff_ts else []
+
         # LIMIT 100 is far above the char_budget can render (~20 rows at 70 chars).
         # Keeps the query bounded as memories grow.
         if project:
@@ -641,11 +651,11 @@ class MemoryDB:
                        {qscore_expr} AS query_score
                 FROM memories m
                 LEFT JOIN sessions s ON m.source_session = s.session_id
-                WHERE m.superseded_by IS NULL
+                WHERE m.superseded_by IS NULL{cutoff_clause}
                 ORDER BY query_score DESC, keep_priority DESC, score DESC
                 LIMIT 100
                 """,
-                (f"%{_like_escape(project)}%", DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE, *qscore_params),
+                (f"%{_like_escape(project)}%", DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE, *qscore_params, *cutoff_params),
             ).fetchall()
         else:
             rows = self.conn.execute(
@@ -654,14 +664,14 @@ class MemoryDB:
                        + MIN(CAST(m.exposure_count AS REAL) / ?, 1.0) AS score,
                        {qscore_expr} AS query_score
                 FROM memories m
-                WHERE m.superseded_by IS NULL
+                WHERE m.superseded_by IS NULL{cutoff_clause}
                 ORDER BY query_score DESC, score DESC
                 LIMIT 100""",
-                (DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE, *qscore_params),
+                (DECAY_HALF_LIFE_DAYS, REINFORCEMENT_SATURATE, *qscore_params, *cutoff_params),
             ).fetchall()
 
         if not rows:
-            output = self._fallback_inject(project)
+            output = self._fallback_inject(project, cutoff_ts=cutoff_ts)
         else:
             # Separate the project-specific handoff from regular memories
             handoff_topic = None
@@ -716,8 +726,9 @@ class MemoryDB:
 
             # Update last_accessed only for memories that actually made it into
             # the injected context. Previously updated all fetched rows, wasting
-            # writes on rows dropped by the char_budget loop.
-            if kept_topics:
+            # writes on rows dropped by the char_budget loop. Skip in cutoff
+            # (eval/replay) mode — read-only.
+            if kept_topics and cutoff_ts is None:
                 placeholders = ",".join("?" * len(kept_topics))
                 self.conn.execute(
                     f"UPDATE memories SET last_accessed = datetime('now'), exposure_count = exposure_count + 1 WHERE topic IN ({placeholders})",
@@ -831,8 +842,13 @@ class MemoryDB:
         result = "\n".join(lines)
         return result[:max_chars]
 
-    def _fallback_inject(self, project: str | None = None) -> str:
-        """Generate ~200 token context block for SessionStart injection (v1 fallback)."""
+    def _fallback_inject(self, project: str | None = None, *, cutoff_ts: str | None = None) -> str:
+        """Generate ~200 token context block for SessionStart injection (v1 fallback).
+
+        When `cutoff_ts` is set, only sessions/facts captured strictly before that
+        timestamp are eligible (eval/replay mode). Git log is skipped — current
+        HEAD does not represent project state at cutoff_ts.
+        """
         if project:
             where_s = "WHERE s.project LIKE ? ESCAPE '\\'"
             where_sf = "WHERE s.project LIKE ? ESCAPE '\\' AND"
@@ -841,6 +857,11 @@ class MemoryDB:
             where_s = ""
             where_sf = "WHERE"
             params = []
+
+        if cutoff_ts:
+            where_s = (where_s + " AND s.captured_at < ?") if where_s else "WHERE s.captured_at < ?"
+            where_sf = where_sf + " s.captured_at < ? AND"
+            params.append(cutoff_ts)
 
         # Last 3 sessions with topics
         sessions = self.conn.execute(
@@ -854,7 +875,7 @@ class MemoryDB:
             params,
         ).fetchall()
 
-        # Git commits from the project cwd
+        # Git commits from the project cwd — skip in eval mode (HEAD ≠ historical state)
         cwd = None
         if sessions:
             cwd = sessions[0]["cwd"]
@@ -863,7 +884,7 @@ class MemoryDB:
             if not cwd.startswith("/"):
                 cwd = "/" + cwd
 
-        commits = self._git_recent_commits(cwd, limit=5)
+        commits = [] if cutoff_ts else self._git_recent_commits(cwd, limit=5)
 
         lines = ["<session-memory>"]
         if sessions:

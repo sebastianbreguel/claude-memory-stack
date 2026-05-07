@@ -101,3 +101,59 @@ def test_first_user_messages_caps_at_n(tmp_path):
 
     out = mod._first_user_messages(transcript, n=3)
     assert len(out) == 3
+
+
+def test_inject_context_cutoff_filters_post_cutoff_memories(tmp_path):
+    """Memories created after cutoff_ts must not appear in the injected text."""
+    import sys
+
+    sys.path.insert(0, str(REPO / "tools"))
+    import memcapture as mc
+
+    db_path = tmp_path / "memory.db"
+    db = mc.MemoryDB(db_path=db_path)
+    try:
+        # Pre-cutoff memory: explicit older timestamp
+        db.conn.execute(
+            "INSERT INTO memories (topic, content, durability, created_at) VALUES (?, ?, ?, ?)",
+            ("old_pref", "old durable about FTS5 reranking", "durable", "2025-01-01 00:00:00"),
+        )
+        # Post-cutoff memory: explicit newer timestamp
+        db.conn.execute(
+            "INSERT INTO memories (topic, content, durability, created_at) VALUES (?, ?, ?, ?)",
+            ("new_pref", "new durable about HNSW indexing", "durable", "2026-06-01 00:00:00"),
+        )
+        db.conn.commit()
+
+        # Cutoff falls between the two memories
+        out = db.inject_context(cutoff_ts="2026-01-01 00:00:00")
+        assert "FTS5" in out
+        assert "HNSW" not in out
+    finally:
+        db.close()
+
+
+def test_inject_context_cutoff_is_read_only(tmp_path):
+    """cutoff_ts mode must not bump last_accessed or insert into injections."""
+    import sys
+
+    sys.path.insert(0, str(REPO / "tools"))
+    import memcapture as mc
+
+    db_path = tmp_path / "memory.db"
+    db = mc.MemoryDB(db_path=db_path)
+    try:
+        db.conn.execute(
+            "INSERT INTO memories (topic, content, durability, created_at, last_accessed) VALUES (?, ?, ?, ?, ?)",
+            ("p", "alpha bravo charlie", "durable", "2025-01-01 00:00:00", "2025-01-01 00:00:00"),
+        )
+        db.conn.commit()
+
+        db.inject_context(session_id="sess-eval", cutoff_ts="2026-01-01 00:00:00")
+
+        la = db.conn.execute("SELECT last_accessed FROM memories WHERE topic = ?", ("p",)).fetchone()[0]
+        assert la == "2025-01-01 00:00:00"
+        injected = db.conn.execute("SELECT COUNT(*) FROM injections WHERE session_id = ?", ("sess-eval",)).fetchone()[0]
+        assert injected == 0
+    finally:
+        db.close()

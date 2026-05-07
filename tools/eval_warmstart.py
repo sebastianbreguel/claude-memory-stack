@@ -112,7 +112,7 @@ def _candidate_sessions(db_path: Path, n: int, seed: int | None = None) -> list[
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         """
-        SELECT s.session_id, s.project, s.transcript_path, s.message_count
+        SELECT s.session_id, s.project, s.transcript_path, s.message_count, s.captured_at
         FROM sessions s
         WHERE s.transcript_path IS NOT NULL
           AND s.project IS NOT NULL
@@ -121,6 +121,7 @@ def _candidate_sessions(db_path: Path, n: int, seed: int | None = None) -> list[
               SELECT 1 FROM memories m
               LEFT JOIN sessions s2 ON m.source_session = s2.session_id
               WHERE m.superseded_by IS NULL
+                AND m.created_at < s.captured_at
                 AND (m.durability = 'durable' OR s2.project = s.project)
           )
         ORDER BY RANDOM()
@@ -145,8 +146,16 @@ def _candidate_sessions(db_path: Path, n: int, seed: int | None = None) -> list[
 
 
 def _evaluate_session(session: dict, db: memcapture.MemoryDB, first: int, threshold: float) -> dict:
-    """Simulate inject + scan first `first` user messages for re-statement."""
-    inject_text = db.inject_context(project=session["project"]).strip()
+    """Simulate inject + scan first `first` user messages for re-statement.
+
+    Uses session.captured_at as historical cutoff so the simulated inject only
+    sees memories that existed before this session was captured. Approximation —
+    captured_at is post-session, but strictly closer to T=0 than current state.
+    """
+    inject_text = db.inject_context(
+        project=session["project"],
+        cutoff_ts=session.get("captured_at"),
+    ).strip()
     inject_tokens = _tokens(inject_text)
     user_msgs = _first_user_messages(Path(session["transcript_path"]), first)
 
