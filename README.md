@@ -4,7 +4,7 @@
 
 **Claude forgets everything between sessions.** Your preferences, your project state, where you left off — gone the moment you close the terminal.
 
-claude-engram fixes that. **~350 ambient tokens. No Docker, no API keys, no MCP.**
+claude-engram fixes that. Open Claude Code tomorrow and it already knows where you left off — what you decided, what broke, what's next. Per-project, automatic, no config.
 
 ![claude-engram warm start demo](demo/readme-hero-focus.gif)
 
