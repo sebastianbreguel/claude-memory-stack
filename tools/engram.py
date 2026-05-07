@@ -275,6 +275,29 @@ Example (with friction: error-loop 3x):
 Return ONLY the 3 lines.
 """
 
+SEED_PROMPT = """You are writing the FIRST executive summary for a project. No prior memories exist; infer state from raw signals below.
+
+CLAUDE.md (head, may be empty):
+{claude_md}
+
+Recent commits (may be empty):
+{git_log}
+
+Top-level files (may be empty):
+{dir_listing}
+
+EXACT format (3 bullets, ≤90 chars each):
+- status: <project + apparent state, use file/dir names>
+- last change: <most recent meaningful commit, in plain language>
+- next: <most logical next step given codebase state>
+
+Rules:
+- Be specific. Use file names, commit messages, package names. Do not hedge.
+- No "appears to be", "seems like", "likely". State what you see.
+- If a field has no signal, write "- <key>: —".
+- No preamble, no closing. Return ONLY the 3 lines.
+"""
+
 
 EXECUTIVE_DIR = Path.home() / ".claude" / "engram" / "executive"
 
@@ -686,34 +709,37 @@ def _build_executive(*, cwd: str, project_key: str) -> int:
     if not output:
         return 0
 
+    _publish_executive(cwd, output, label="executive")
+    return 0
+
+
+def _publish_executive(cwd: str, output: str, *, label: str = "executive") -> None:
+    """Atomic publish of an executive summary string to <slug>.md.
+
+    Write tmp first so a failed write never destroys the current cache. Tmp
+    filename includes the PID so concurrent SessionStart hooks in different
+    windows on the same project don't race on a shared tmp. Existing cache
+    rotates to .prev before overwriting, recoverable via `engram preview --prev`.
+    All failures are swallowed via _log_warning (caller stays no-op-on-error).
+    """
     cache = _executive_cache_path(cwd)
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        # Write tmp first so a failed `tmp.write_text` never destroys the current
-        # cache. Tmp filename includes the PID so concurrent SessionStart hooks
-        # in different windows on the same project don't race on a shared tmp.
-        # Note: if the final `os.replace(tmp, cache)` below fails after rotation,
-        # the live summary is recoverable via `engram preview --prev`.
         tmp = cache.parent / f"{cache.name}.{os.getpid()}.tmp"
         try:
             tmp.write_text(output + "\n", encoding="utf-8")
         except OSError:
             tmp.unlink(missing_ok=True)
             raise
-        # Safety net: rotate existing cache to .prev before overwriting.
-        # `engram preview --prev` recovers the last good summary when Sonnet
-        # compresses the next rebuild poorly OR when the publish step below fails.
         if cache.exists():
             prev = cache.with_suffix(cache.suffix + ".prev")
             try:
                 os.replace(cache, prev)
             except OSError as e:
-                _log_warning(f"executive: rotate to .prev failed: {e}")
-        # Atomic publish.
+                _log_warning(f"{label}: rotate to .prev failed: {e}")
         os.replace(tmp, cache)
     except Exception as e:
-        _log_warning(f"executive: cache write failed: {e}")
-    return 0
+        _log_warning(f"{label}: cache write failed: {e}")
 
 
 def _on_executive(args: argparse.Namespace) -> int:
@@ -721,6 +747,67 @@ def _on_executive(args: argparse.Namespace) -> int:
     test callers (and the `engram _executive` subcommand) can pass a Namespace
     while internal call sites use the kwarg-pure body."""
     return _build_executive(cwd=args.cwd or "", project_key=args.project_key or "")
+
+
+def _seed_executive(*, cwd: str) -> int:
+    """First-session seed: synthesize 3-bullet executive from raw project signals
+    (CLAUDE.md head + git log + top-level dir) when no executive cache exists yet.
+
+    Fire-and-forget from SessionStart on a cwd with no cache. Same atomic publish
+    path as `_build_executive`; once a real PreCompact runs, that overwrites this.
+    Silent no-op on any failure (SessionStart already fell back to live inject).
+    """
+    cwd = cwd or ""
+    if not cwd or not Path(cwd).is_dir():
+        return 0
+
+    claude_md = ""
+    cm = Path(cwd) / "CLAUDE.md"
+    if cm.exists():
+        try:
+            claude_md = "\n".join(cm.read_text(encoding="utf-8", errors="replace").splitlines()[:50])
+        except Exception:
+            claude_md = ""
+
+    git_log = ""
+    try:
+        lg = subprocess.run(
+            ["git", "-C", cwd, "log", "-20", "--oneline", "--no-decorate"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if lg.returncode == 0:
+            git_log = lg.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    dir_listing = ""
+    try:
+        entries = sorted(p.name for p in Path(cwd).iterdir() if not p.name.startswith("."))[:30]
+        dir_listing = "\n".join(entries)
+    except Exception:
+        pass
+
+    if not (claude_md or git_log or dir_listing):
+        return 0
+
+    prompt = (
+        SEED_PROMPT.replace("{claude_md}", claude_md or "(none)")
+        .replace("{git_log}", git_log or "(none)")
+        .replace("{dir_listing}", dir_listing or "(none)")
+    )
+    output = _run_claude(prompt, chunk="").strip()
+    if not output:
+        return 0
+
+    _publish_executive(cwd, output, label="seed")
+    return 0
+
+
+def _on_seed_executive(args: argparse.Namespace) -> int:
+    """Argparse wrapper around _seed_executive (mirrors _on_executive)."""
+    return _seed_executive(cwd=args.cwd or "")
 
 
 def _log_tail(args: argparse.Namespace) -> int:
@@ -1037,6 +1124,18 @@ def _on_session_start(_args: argparse.Namespace) -> int:
                 executive = cache.read_text(encoding="utf-8").strip()
             except Exception:
                 executive = ""
+        else:
+            # First session in this cwd: seed bullets in background so session 2
+            # opens with executive content. Fire-and-forget; SessionStart still
+            # falls back to live inject below for this session's banner.
+            _fire_and_forget(
+                [
+                    sys.executable,
+                    str(Path(__file__)),
+                    "_seed",
+                    f"--cwd={cwd}",
+                ]
+            )
 
     # Schema-version refusal raised by MemoryDB._migrate must not crash the
     # SessionStart hook. Catch + surface in systemMessage so the user sees the
@@ -1237,6 +1336,10 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--cwd", required=True)
     ex.add_argument("--project-key", dest="project_key", default="")
     ex.set_defaults(func=_on_executive)
+
+    sd = sub.add_parser("_seed", help="(internal) seed first-session executive from raw project signals")
+    sd.add_argument("--cwd", required=True)
+    sd.set_defaults(func=_on_seed_executive)
 
     pv = sub.add_parser("preview", help="preview SessionStart executive summary (for debug/demo)")
     pv.add_argument("--cwd", default=None)

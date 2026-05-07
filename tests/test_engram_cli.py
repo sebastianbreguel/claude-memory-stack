@@ -994,3 +994,95 @@ def test_hooks_json_uses_engram_inline():
                 cmd = h.get("command", "")
                 assert "engram.py" in cmd, f"hook should reference engram.py: {cmd}"
                 assert ".sh" not in cmd, f"hook should not reference a shell script: {cmd}"
+
+
+def _load_engram_mod():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engram_mod", ENGRAM)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_seed_executive_writes_cache_with_signals(tmp_path, monkeypatch):
+    """_seed_executive writes 3-bullet cache when CLAUDE.md / git / dir signals exist."""
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "CLAUDE.md").write_text("# Test project\n\nThis is a fake project.\n")
+    (proj / "README.md").write_text("readme")
+    (proj / "src").mkdir()
+
+    mod = _load_engram_mod()
+    canned = "- status: test project, 3 files\n- last change: scaffolded layout\n- next: write first module"
+    monkeypatch.setattr(mod, "_run_claude", lambda prompt, chunk="", timeout=120: canned)
+
+    assert mod._seed_executive(cwd=str(proj)) == 0
+    cache = mod._executive_cache_path(str(proj))
+    assert cache.exists()
+    assert cache.read_text().strip() == canned
+
+
+def test_seed_executive_noop_when_no_signals(tmp_path, monkeypatch):
+    """No CLAUDE.md, no git repo, empty dir → seed is a no-op (no LLM call, no cache)."""
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    proj = tmp_path / "empty"
+    proj.mkdir()
+
+    mod = _load_engram_mod()
+    called = {"n": 0}
+
+    def boom(*a, **kw):
+        called["n"] += 1
+        return ""
+
+    monkeypatch.setattr(mod, "_run_claude", boom)
+
+    assert mod._seed_executive(cwd=str(proj)) == 0
+    cache = mod._executive_cache_path(str(proj))
+    assert not cache.exists()
+    assert called["n"] == 0
+
+
+def test_seed_executive_noop_on_invalid_cwd(tmp_path, monkeypatch):
+    """Invalid / missing cwd returns 0 without calling the LLM."""
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    mod = _load_engram_mod()
+    called = {"n": 0}
+    monkeypatch.setattr(mod, "_run_claude", lambda *a, **kw: (called.__setitem__("n", called["n"] + 1) or "x"))
+
+    assert mod._seed_executive(cwd="") == 0
+    assert mod._seed_executive(cwd=str(tmp_path / "does-not-exist")) == 0
+    assert called["n"] == 0
+
+
+def test_seed_executive_atomic_publish_rotates_prev(tmp_path, monkeypatch):
+    """If a stale cache exists, _seed_executive rotates it to .prev before overwriting."""
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "CLAUDE.md").write_text("hi\n")
+
+    mod = _load_engram_mod()
+    cache = mod._executive_cache_path(str(proj))
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text("STALE\n")
+
+    monkeypatch.setattr(mod, "_run_claude", lambda *a, **kw: "FRESH SEED")
+    assert mod._seed_executive(cwd=str(proj)) == 0
+    assert cache.read_text().strip() == "FRESH SEED"
+    prev = cache.with_suffix(cache.suffix + ".prev")
+    assert prev.exists()
+    assert prev.read_text().strip() == "STALE"
