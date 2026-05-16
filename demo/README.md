@@ -66,5 +66,5 @@ Each beat is designed to stand alone, so you can also drop a single one into a t
 
 - Colors live in `:root { --bg, --fg, --accent, ... }` at the top of every file — tweak once.
 - Timeline offsets are plain numbers on `tl.fromTo(... , N)` calls; search for the seconds and shift.
-- Numbers shown in banners (sessions, memories) are hard-coded for the demo — keep them internally consistent across beats (globals shows 49/196, patterns shows 50/197 one session later).
+- Numbers shown in banners (sessions, memories) are hard-coded for the demo — keep them internally consistent across beats.
 - Paths and signal names should track the real code — if you rename `rapid-corrections` or move the executive cache, update the HTMLs too.

@@ -21,24 +21,24 @@ fi
 echo "[1/4] Creating directories..."
 mkdir -p "$CLAUDE_DIR/tools"
 mkdir -p "$CLAUDE_DIR/skills/reflect"
-mkdir -p "$CLAUDE_DIR/skills/usage"
 
 echo "[2/4] Installing files..."
 
 cp "$SCRIPT_DIR/tools/engram.py" "$CLAUDE_DIR/tools/engram.py"
 cp "$SCRIPT_DIR/tools/memcapture.py" "$CLAUDE_DIR/tools/memcapture.py"
-cp "$SCRIPT_DIR/tools/mempatterns.py" "$CLAUDE_DIR/tools/mempatterns.py"
 cp "$SCRIPT_DIR/tools/memdoctor.py" "$CLAUDE_DIR/tools/memdoctor.py"
 chmod +x "$CLAUDE_DIR/tools/engram.py"
 echo "  -> tools/engram.py (unified CLI + hook orchestrators)"
 echo "  -> tools/memcapture.py (SQLite session capture)"
-echo "  -> tools/mempatterns.py (pattern detection + wiki)"
 echo "  -> tools/memdoctor.py (friction signal detector)"
 
+# Remove legacy artifacts from older installs
+rm -f "$CLAUDE_DIR/tools/mempatterns.py"
+rm -rf "$CLAUDE_DIR/patterns"
+rm -rf "$CLAUDE_DIR/skills/usage"
+
 cp "$SCRIPT_DIR/skills/reflect/SKILL.md" "$CLAUDE_DIR/skills/reflect/SKILL.md"
-cp "$SCRIPT_DIR/skills/usage/SKILL.md" "$CLAUDE_DIR/skills/usage/SKILL.md"
 echo "  -> skills/reflect/SKILL.md (memory consolidation + rule proposals)"
-echo "  -> skills/usage/SKILL.md (agent/skill/plugin invocation stats)"
 
 echo "[3/4] Configuring hooks..."
 

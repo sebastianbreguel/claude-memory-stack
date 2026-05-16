@@ -32,7 +32,6 @@ sys.path.insert(0, str(TOOLS_DIR))
 
 import memcapture  # noqa: E402
 import memdoctor  # noqa: E402
-import mempatterns  # noqa: E402
 
 
 def _log_warning(msg: str) -> None:
@@ -496,13 +495,6 @@ def _on_precompact(_args: argparse.Namespace) -> int:
                 f"--project={project}",
             ]
         )
-
-    import mempatterns
-
-    try:
-        mempatterns.update_now()
-    except Exception as e:
-        print(f"patterns error: {e}", file=sys.stderr)
 
     cwd = payload.get("cwd") or _cwd_from_transcript(transcript)
     if cwd:
@@ -981,98 +973,6 @@ def _verify_install(_args: argparse.Namespace) -> int:
     return 1
 
 
-def _fm_name(path: Path) -> str | None:
-    """Parse `name:` from YAML frontmatter (first --- block). Cheap, no yaml dep."""
-    try:
-        with path.open(encoding="utf-8") as fh:
-            if fh.readline().strip() != "---":
-                return None
-            for line in fh:
-                if line.strip() == "---":
-                    return None
-                if line.startswith("name:"):
-                    return line.split(":", 1)[1].strip().strip("\"'")
-    except Exception:
-        return None
-    return None
-
-
-def _installed_agents_skills() -> dict[str, set[str]]:
-    """Enumerate installed agents + skills. Plugin-bundled entries are prefixed
-    with `<plugin_id>:` to match the JSONL bucket naming."""
-    home = Path.home() / ".claude"
-    out: dict[str, set[str]] = {"agent": set(), "skill": set()}
-    for f in (home / "agents").glob("*.md"):
-        out["agent"].add(_fm_name(f) or f.stem)
-    for sf in (home / "skills").glob("*/SKILL.md"):
-        out["skill"].add(_fm_name(sf) or sf.parent.name)
-    # Plugin-bundled: ~/.claude/plugins/cache/<plugin>/<plugin>/<ver>/(agents|skills)
-    for plugin_dir in (home / "plugins" / "cache").glob("*/*/*"):
-        plugin_id = plugin_dir.parent.name
-        for f in (plugin_dir / "agents").glob("*.md"):
-            out["agent"].add(f"{plugin_id}:{_fm_name(f) or f.stem}")
-        for sf in (plugin_dir / "skills").glob("*/SKILL.md"):
-            out["skill"].add(f"{plugin_id}:{_fm_name(sf) or sf.parent.name}")
-    return out
-
-
-def _usage(_args: argparse.Namespace) -> int:
-    """Count agent/skill/plugin invocations across all session JSONLs, joined
-    against installed agents + skills on disk. Never-invoked items appear with
-    count=0 at the top. Passive readout, no recommender."""
-    from collections import defaultdict
-
-    root = Path.home() / ".claude" / "projects"
-    if not root.exists():
-        print("No ~/.claude/projects/. Nothing to count.")
-        return 1
-    buckets: dict[tuple[str, str], list] = defaultdict(lambda: [0, ""])
-    for f in root.rglob("*.jsonl"):
-        try:
-            with f.open(encoding="utf-8") as fh:
-                for line in fh:
-                    try:
-                        d = _json.loads(line)
-                    except Exception:
-                        continue
-                    msg = d.get("message") or {}
-                    if not isinstance(msg, dict):
-                        continue
-                    ts = d.get("timestamp", "") or ""
-                    for c in msg.get("content") or []:
-                        if not isinstance(c, dict) or c.get("type") != "tool_use":
-                            continue
-                        n = c.get("name", "") or ""
-                        inp = c.get("input") or {}
-                        if n == "Agent":
-                            key = ("agent", inp.get("subagent_type") or "?")
-                        elif n == "Skill":
-                            key = ("skill", inp.get("skill") or "?")
-                        elif n.startswith("mcp__"):
-                            parts = n.split("__", 2)
-                            key = ("plugin", parts[1] if len(parts) >= 2 else n)
-                        else:
-                            continue
-                        b = buckets[key]
-                        b[0] += 1
-                        if ts > b[1]:
-                            b[1] = ts
-        except Exception:
-            continue
-    # Left-join: every installed agent/skill becomes a row, count=0 if never invoked.
-    for typ, names in _installed_agents_skills().items():
-        for name in names:
-            buckets.setdefault((typ, name), [0, ""])
-    if not buckets:
-        print("No agent/skill/plugin invocations or installs found.")
-        return 0
-    rows = sorted(buckets.items(), key=lambda kv: kv[1][1] or "")
-    print(f"{'type':<7} {'name':<50} {'count':>6}  last_used")
-    for (t, n), (cnt, last) in rows:
-        print(f"{t:<7} {n[:50]:<50} {cnt:>6}  {last[:10] or 'never'}")
-    return 0
-
-
 def _self_check(args: argparse.Namespace) -> int:
     """Detect vague-prompt → tool-cascade pattern: sessions where user prompts were
     short but Claude fired many tools. Highest-cost failure mode per your CLAUDE.md
@@ -1248,27 +1148,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--project", default=None)
     s.set_defaults(func=lambda a: memcapture.ingest_snapshot(a.session_id, a.project, "" if sys.stdin.isatty() else sys.stdin.read()))
 
-    pt = sub.add_parser("patterns", help="pattern detection + wiki")
-    pt.add_argument("--update", action="store_true")
-    pt.add_argument("--status", action="store_true")
-    pt.add_argument("--report", action="store_true")
-
-    def _patterns_dispatch(a: argparse.Namespace) -> int:
-        if a.update:
-            return mempatterns.update_now()
-        if a.status:
-            return mempatterns.status_now()
-        if a.report:
-            return mempatterns.report_now()
-        return 0
-
-    pt.set_defaults(func=_patterns_dispatch)
-
     st = sub.add_parser("stats", help="capture statistics")
     st.set_defaults(func=lambda _a: memcapture.stats())
-
-    us = sub.add_parser("usage", help="count agent/skill/plugin invocations (stalest first)")
-    us.set_defaults(func=_usage)
 
     sc = sub.add_parser("self-check", help="detect vague-prompt → tool-cascade sessions (your prompting habits)")
     sc.add_argument("--limit", type=int, default=10, help="max sessions to show (default 10)")

@@ -25,6 +25,7 @@ rm -f "$CLAUDE_DIR/hooks/memcompact-hook.sh"
 rm -f "$CLAUDE_DIR/hooks/mempatterns-hook.sh"
 rm -rf "$CLAUDE_DIR/skills/reflect"
 rm -rf "$CLAUDE_DIR/skills/patterns"  # legacy, may not exist
+rm -rf "$CLAUDE_DIR/patterns"  # legacy pattern wiki (removed in pre-launch)
 echo "  Removed tools and skills."
 
 echo "[2/3] Removing hook configuration..."
@@ -62,5 +63,3 @@ echo "[3/3] Done."
 echo ""
 echo "Note: ~/.claude/memory.db was NOT deleted (contains your session history)."
 echo "To delete it: rm ~/.claude/memory.db"
-echo "Note: ~/.claude/patterns/ was NOT deleted (contains your pattern wiki)."
-echo "To delete it: rm -rf ~/.claude/patterns/"

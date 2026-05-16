@@ -750,14 +750,6 @@ class MemoryDB:
                     )
                 self.conn.commit()
 
-        # Append active patterns (co-edits, recurring errors)
-        try:
-            patterns_block = self._read_active_patterns()
-            if patterns_block:
-                output += "\n" + patterns_block
-        except Exception:
-            pass
-
         # Append compaction snapshot if available
         if project:
             snapshot = self.get_latest_snapshot(project)
@@ -765,66 +757,6 @@ class MemoryDB:
                 output += "\n" + self._format_snapshot(snapshot["snapshot"])
 
         return output
-
-    @staticmethod
-    def _read_active_patterns(wiki_dir: Path | None = None, max_patterns: int = 5) -> str:
-        """Read top active co_edit/error_recurrence patterns from wiki. Returns compact text or ''.
-
-        Cached: result is written to `<wiki>/.active_cache` and reused while the
-        patterns/ directory mtime matches the cache's stored mtime. Avoids
-        globbing + regex-ing every pattern .md on every SessionStart.
-        """
-        wiki = wiki_dir or (Path.home() / ".claude" / "patterns")
-        patterns_dir = wiki / "patterns"
-        if not patterns_dir.exists():
-            return ""
-
-        cache_file = wiki / ".active_cache"
-        try:
-            dir_mtime = patterns_dir.stat().st_mtime
-        except OSError:
-            dir_mtime = 0.0
-
-        if cache_file.exists():
-            try:
-                cached = json.loads(cache_file.read_text())
-                if cached.get("mtime") == dir_mtime and cached.get("max_patterns") == max_patterns:
-                    return cached.get("text", "")
-            except (OSError, json.JSONDecodeError):
-                pass
-
-        entries: list[tuple[int, str]] = []
-        for pf in patterns_dir.glob("*.md"):
-            try:
-                content = pf.read_text()
-            except Exception:
-                continue
-            status_m = re.search(r"^status:\s*(\S+)", content, re.MULTILINE)
-            if not status_m or status_m.group(1) != "active":
-                continue
-            kind_m = re.search(r"^kind:\s*(\S+)", content, re.MULTILINE)
-            kind = kind_m.group(1) if kind_m else ""
-            if kind not in ("co_edit", "error_recurrence"):
-                continue
-            conf_m = re.search(r"^confidence:\s*(\d+)", content, re.MULTILINE)
-            conf = int(conf_m.group(1)) if conf_m else 0
-            desc_m = re.search(r"^# .+\n\n(.+)", content, re.MULTILINE)
-            if not desc_m:
-                continue
-            entries.append((conf, desc_m.group(1).strip()[:120]))
-
-        if not entries:
-            text = ""
-        else:
-            entries.sort(key=lambda x: -x[0])
-            lines = [e[1] for e in entries[:max_patterns]]
-            text = "<patterns>\n" + "\n".join(f"- {line}" for line in lines) + "\n</patterns>"
-
-        try:
-            cache_file.write_text(json.dumps({"mtime": dir_mtime, "max_patterns": max_patterns, "text": text}))
-        except OSError:
-            pass
-        return text
 
     def _format_snapshot(self, snapshot_json: str, max_chars: int = 600) -> str:
         """Format a compaction snapshot as an injection block (capped to ~150 tokens)."""
@@ -1383,15 +1315,11 @@ def stats(*, db: MemoryDB | None = None, out: TextIO | None = None) -> int:
 
         top_projects = d.conn.execute("SELECT project, COUNT(*) as c FROM sessions GROUP BY project ORDER BY c DESC LIMIT 5").fetchall()
 
-        patterns_dir = Path.home() / ".claude" / "patterns" / "patterns"
-        pattern_count = len(list(patterns_dir.glob("*.md"))) if patterns_dir.exists() else 0
-
         print("engram — what I've learned about you\n")
         print(f"  {s['sessions']:>5} sessions captured, {cs['total']} compactions processed")
         print(f"  {s['unique_files']:>5} unique files touched")
         print(f"  {durable:>5} preferences remembered (durable)")
         print(f"  {ephemeral:>5} context notes active (ephemeral)")
-        print(f"  {pattern_count:>5} patterns detected in wiki")
 
         if top_projects:
             print("\nMost active projects:")

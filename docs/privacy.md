@@ -23,7 +23,6 @@ claude-engram captures the following data, stored locally on disk:
 - **Atomic memories** — LLM-extracted preferences, practices, and project state
 
 All structured data is stored in `~/.claude/memory.db` (SQLite).
-Pattern and context files are stored in `~/.claude/patterns/` (Markdown).
 
 ## What is NOT stored
 
@@ -46,10 +45,10 @@ None. claude-engram has no external dependencies, no cloud backend, and no third
 
 Your data is yours. You can:
 
-- **Inspect** it at any time: `sqlite3 ~/.claude/memory.db` or browse `~/.claude/patterns/`
+- **Inspect** it at any time: `sqlite3 ~/.claude/memory.db`
 - **Delete** specific memories through the plugin's CLI tools
 - **Uninstall** cleanly by running `./uninstall.sh`, which removes tools and hooks
-- **Delete all data** by removing `~/.claude/memory.db` and `~/.claude/patterns/` manually
+- **Delete all data** by removing `~/.claude/memory.db` manually
 
 Note: `uninstall.sh` preserves `memory.db` by default so you don't lose your memories if you reinstall. Delete it manually if you want a full wipe.
 

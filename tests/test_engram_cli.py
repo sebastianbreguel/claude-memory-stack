@@ -30,7 +30,6 @@ def test_help_lists_all_subcommands():
         "inject",
         "digest",
         "snapshot",
-        "patterns",
         "stats",
         "memories",
         "forget",
@@ -104,7 +103,7 @@ def test_verify_install_flags_missing_file(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     installed = fake_home / ".claude" / "tools"
     installed.mkdir(parents=True)
-    # Install only engram.py; memcapture/mempatterns/memdoctor missing
+    # Install only engram.py; memcapture/memdoctor missing
     (installed / "engram.py").write_bytes((REPO / "tools" / "engram.py").read_bytes())
 
     monkeypatch.setenv("HOME", str(fake_home))
@@ -462,52 +461,6 @@ def test_run_llm_helper_and_handler_are_distinct_names():
     assert hasattr(mod, "_run_claude"), "helper must exist under a non-colliding name"
     assert mod._run_claude.__code__.co_argcount >= 2, "_run_claude takes (prompt, chunk, ...)"
     assert mod._run_llm.__code__.co_argcount == 1, "_run_llm handler takes (args,) only"
-
-
-# ---------------------------------------------------------------------------
-# Fix 7 — patterns subcommand dispatch routing
-# ---------------------------------------------------------------------------
-
-
-def _init_fake_home(tmp_path: Path, monkeypatch) -> Path:
-    """Create a fake HOME with an initialised memory.db (via `engram stats`)."""
-    fake_home = tmp_path / "home"
-    (fake_home / ".claude").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(fake_home))
-    # stats opens MemoryDB which runs CREATE TABLE IF NOT EXISTS for all tables
-    _run(["stats"])
-    return fake_home
-
-
-def test_patterns_update_exits_zero(tmp_path, monkeypatch):
-    """`engram patterns --update` dispatches to update_now() and exits 0."""
-    _init_fake_home(tmp_path, monkeypatch)
-    result = _run(["patterns", "--update"])
-    assert result.returncode == 0, f"patterns --update failed: {result.stderr}"
-
-
-def test_patterns_status_exits_zero(tmp_path, monkeypatch):
-    """`engram patterns --status` dispatches to status_now() and exits 0."""
-    _init_fake_home(tmp_path, monkeypatch)
-    result = _run(["patterns", "--status"])
-    assert result.returncode == 0, f"patterns --status failed: {result.stderr}"
-
-
-def test_patterns_report_exits_zero(tmp_path, monkeypatch):
-    """`engram patterns --report` dispatches to report_now() and exits 0."""
-    _init_fake_home(tmp_path, monkeypatch)
-    result = _run(["patterns", "--report"])
-    assert result.returncode == 0, f"patterns --report failed: {result.stderr}"
-
-
-def test_patterns_no_flag_is_noop(tmp_path, monkeypatch):
-    """`engram patterns` with no flag is a silent no-op (exit 0)."""
-    fake_home = tmp_path / "home"
-    (fake_home / ".claude").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(fake_home))
-    result = _run(["patterns"])
-    assert result.returncode == 0, f"patterns no-flag failed: {result.stderr}"
-    assert result.stdout.strip() == "", f"expected silent no-op, got: {result.stdout!r}"
 
 
 def test_exec_prompt_includes_signals_slot():
@@ -998,6 +951,7 @@ def test_hooks_json_uses_engram_inline():
 
 def _load_engram_mod():
     import importlib.util
+
     spec = importlib.util.spec_from_file_location("engram_mod", ENGRAM)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -1058,7 +1012,7 @@ def test_seed_executive_noop_on_invalid_cwd(tmp_path, monkeypatch):
 
     mod = _load_engram_mod()
     called = {"n": 0}
-    monkeypatch.setattr(mod, "_run_claude", lambda *a, **kw: (called.__setitem__("n", called["n"] + 1) or "x"))
+    monkeypatch.setattr(mod, "_run_claude", lambda *a, **kw: called.__setitem__("n", called["n"] + 1) or "x")
 
     assert mod._seed_executive(cwd="") == 0
     assert mod._seed_executive(cwd=str(tmp_path / "does-not-exist")) == 0

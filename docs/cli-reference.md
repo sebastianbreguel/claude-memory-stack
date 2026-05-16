@@ -34,11 +34,6 @@ uv run ~/.claude/tools/engram.py doctor --per-project   # one scoped rule block 
 # Executive summary (per-project cache, rebuilt in background)
 uv run ~/.claude/tools/engram.py preview             # print current summary (builds if missing)
 uv run ~/.claude/tools/engram.py preview --prev      # print rotated previous summary (safety net — never rebuilds)
-
-# Pattern wiki (emergent, opt-in exploration)
-uv run ~/.claude/tools/engram.py patterns --report   # detected file co-edits, tool bias, recurring errors
-uv run ~/.claude/tools/engram.py patterns --status   # wiki stats
-uv run ~/.claude/tools/engram.py patterns --update   # rebuild wiki (normally happens on PreCompact)
 ```
 
 `verify-install` must be run from the repo (never from the install path). It reports `drift` (SHA mismatch), `missing` (installed but deleted), or `OK` (all in sync). Exit code 0 = sync, 1 = drift/missing. Remedy: re-run `./install.sh`.
@@ -103,7 +98,6 @@ echo '{"session_id":"abc","cwd":"/path/to/project"}' | \
 | `on-precompact` snapshot | ~2-3K input | Background, detached Sonnet 4.6 subprocess |
 | `on-precompact` executive | ~1-2K input | Background, detached Sonnet 4.6 subprocess |
 | `on-user-prompt` digest + executive | ~2-5K input | Every 25 prompts, detached Sonnet 4.6 |
-| `on-precompact` patterns | 0 | Background, no LLM |
 | `/reflect`  | ~900 | Only when invoked |
 | **Ambient total** | **~350** | **Per session** |
 
@@ -115,7 +109,6 @@ If you skip `install.sh`:
 # Copy tools
 cp tools/engram.py        ~/.claude/tools/
 cp tools/memcapture.py    ~/.claude/tools/
-cp tools/mempatterns.py   ~/.claude/tools/
 cp tools/memdoctor.py     ~/.claude/tools/
 chmod +x ~/.claude/tools/engram.py
 
@@ -165,4 +158,4 @@ uv run ~/.claude/tools/engram.py capture --all
 
 v0.1 used 5 shell hooks (`memcapture-hook.sh`, `memcapture-inject.sh`, `memdigest-hook.sh`, `memcompact-hook.sh`, `mempatterns-hook.sh`). v1 consolidates them into two `engram.py` subcommands.
 
-Re-run `./install.sh`: it strips the legacy `.sh` entries from `settings.json` and writes the unified hook entries. `memory.db` and `~/.claude/patterns/` are preserved.
+Re-run `./install.sh`: it strips the legacy `.sh` entries from `settings.json`, writes the unified hook entries, and removes any leftover pattern wiki from older installs. `memory.db` is preserved.

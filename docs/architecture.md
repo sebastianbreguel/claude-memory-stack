@@ -7,7 +7,6 @@ claude-engram is a Claude Code plugin with **three hooks, one Python entrypoint*
 ```
 ~/.claude/
 ├── memory.db                    # SQLite — sessions, facts, memories, compactions
-├── patterns/                    # Obsidian-compatible wiki (mempatterns output)
 ├── session-env/                 # Pre-compact work-state snapshots (markdown)
 ├── engram/
 │   └── executive/<cwd-slug>.md       # Per-project executive summary cache (3 bullets)
@@ -16,7 +15,6 @@ claude-engram is a Claude Code plugin with **three hooks, one Python entrypoint*
 ├── tools/
 │   ├── engram.py                # Unified CLI + hook orchestrator (single entrypoint)
 │   ├── memcapture.py            # JSONL parser + SQLite writer + FTS5 search
-│   ├── mempatterns.py           # Pattern detection (file co-edits, tool bias, errors)
 │   └── memdoctor.py             # Friction signal detector (correction-heavy, error-loop, restart-cluster, ...)
 │
 └── skills/
@@ -49,8 +47,7 @@ Manual installs use `$HOME/.claude` instead of `$CLAUDE_PLUGIN_ROOT` — both pa
 1. **Synchronous:** parse transcript + upsert to `memory.db` (sessions, facts, files, tools).
 2. **Fire-and-forget:** spawn detached Sonnet 4.6 subprocess for **digest** (preferences, practices, handoff paragraph) — result ingested back via stdin into `memories`.
 3. **Fire-and-forget:** spawn detached Sonnet 4.6 subprocess for **snapshot** (JSON: task, files, last_error, summary) — stored in `compactions`.
-4. **Synchronous:** run `mempatterns --update` over the *previous* session's memories to refresh `~/.claude/patterns/`.
-5. **Fire-and-forget:** spawn detached Sonnet 4.6 subprocess for **executive** — merges Claude Code's `※ recap` + engram's inject_context + `memdoctor` friction signals + git state (branch + dirty files) into a 3-bullet summary (`status` / `last change` / `next`) cached at `~/.claude/engram/executive/<cwd-slug>.md`. Previous cache is rotated to `<cwd-slug>.md.prev` before overwrite as a safety net.
+4. **Fire-and-forget:** spawn detached Sonnet 4.6 subprocess for **executive** — merges Claude Code's `※ recap` + engram's inject_context + `memdoctor` friction signals + git state (branch + dirty files) into a 3-bullet summary (`status` / `last change` / `next`) cached at `~/.claude/engram/executive/<cwd-slug>.md`. Previous cache is rotated to `<cwd-slug>.md.prev` before overwrite as a safety net.
 
 The fire-and-forget subprocesses use `start_new_session=True` so they survive the parent hook's exit. No lockfile — concurrent compactions are absorbed by `PRAGMA busy_timeout=5000` + `UNIQUE(topic)` on `memories`. The executive cache is overwrite-only (latest wins), with one-step rollback via `engram preview --prev`.
 
@@ -131,13 +128,12 @@ PRAGMA busy_timeout = 5000;            -- collision absorber
 6. **Durable vs ephemeral** — preferences persist indefinitely; project state expires in 7 days. Ephemeral memories are scoped to the current `cwd`.
 7. **Collision absorber, not coordination** — two PreCompact hooks racing on the same session are absorbed by `PRAGMA busy_timeout=5000` + `UNIQUE(topic)`. No lockfile, no coordinator. Cost: occasional redundant Sonnet call.
 8. **Schema baseline stamped at `user_version=1`** — columns live in `CREATE TABLE IF NOT EXISTS`. Future typed constraints hook into a `PRAGMA user_version` migration ladder.
-9. **Patterns runs on previous session's memories** — PreCompact order is: capture (sync) → digest (async) → patterns (sync). Patterns reflect what the last compaction wrote, not this one. By design.
-10. **Advisory skills** — `/reflect` consolidates memory (writes) and proposes CLAUDE.md rules (advisory). CLAUDE.md is never auto-written.
-11. **Idempotent install** — re-running `install.sh` strips legacy `.sh` hook entries from `settings.json` and reinstalls the unified `engram.py` hooks. `memory.db` and `patterns/` are preserved.
+9. **Advisory skills** — `/reflect` consolidates memory (writes) and proposes CLAUDE.md rules (advisory). CLAUDE.md is never auto-written.
+10. **Idempotent install** — re-running `install.sh` strips legacy `.sh` hook entries from `settings.json`, reinstalls the unified `engram.py` hooks, and removes any leftover pattern wiki from older installs. `memory.db` is preserved.
 
 ## Why one entrypoint
 
-The v0.1 architecture had 4-5 shell scripts calling individual Python modules. v1 collapsed that to `engram.py` with argparse subcommands. The hooks just invoke `engram.py on-precompact` / `engram.py on-session-start` / `engram.py on-user-prompt`; everything else (capture, digest dispatch, snapshot dispatch, executive merge, patterns update, banner) is regular Python inside one process.
+The v0.1 architecture had 4-5 shell scripts calling individual Python modules. v1 collapsed that to `engram.py` with argparse subcommands. The hooks just invoke `engram.py on-precompact` / `engram.py on-session-start` / `engram.py on-user-prompt`; everything else (capture, digest dispatch, snapshot dispatch, executive merge, banner) is regular Python inside one process.
 
 This trades a tiny bit of startup time for a simpler mental model, a single place to debug, and no shell-quoting landmines when user settings paths contain spaces.
 

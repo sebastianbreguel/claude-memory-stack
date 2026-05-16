@@ -6,10 +6,11 @@
 - **Skills merged**: `/memclean` absorbed into `/reflect`. One unified reflection pass: Phase 1 orient → Phase 2 gather → Phase 3 detect patterns → Phase 4 consolidate memory (writes) → Phase 5 propose CLAUDE.md rules (advisory). Users who ran both now run one. Memory writes stay agentic; CLAUDE.md stays advisory.
 
 ### Removed
+- **Pattern wiki / `mempatterns` tool fully removed.** The Obsidian-compatible `~/.claude/patterns/` wiki, the `engram patterns` CLI subcommand, and the inject-time `<patterns>` block are gone. Was already demoted to silent background in a prior commit; this nukes it entirely pre-launch. `install.sh` now removes any leftover wiki dir from older installs, and `uninstall.sh` actively deletes `~/.claude/patterns/` instead of just leaving a note.
 - `/memclean` skill (merged into `/reflect`). Delete `~/.claude/skills/memclean/` manually if present from an older install.
+- `engram usage` subcommand + `/usage` skill. Stalest-first inventory of agent/skill/plugin invocations was a passive readout with no recommender — cut pre-launch as unused surface. Delete `~/.claude/skills/usage/` manually if present from an older install.
 
 ### Added
-- `engram usage`: scrape all session JSONLs, count agent/skill/plugin invocations, **left-joined against installed agents + skills on disk** (`~/.claude/agents/*.md`, `~/.claude/skills/*/SKILL.md`, and plugin-bundled `~/.claude/plugins/cache/<id>/<id>/<ver>/{agents,skills}/*`). Frontmatter `name:` is the join key; plugin-bundled entries are prefixed `<plugin_id>:<name>` to match JSONL bucket naming. Never-invoked rows show `count=0  last_used=never` at the top. Plugins are invoked-only (MCP server id ≠ plugin id — matching unreliable). Passive readout, no recommender.
 - `engram --version` top-level flag and `engram verify-install` subcommand: SHA256-compares `tools/*.py` in the repo against `~/.claude/tools/` and flags drift, missing files, or sync. Catches "forgot to re-run install.sh" silently breaking behavior.
 - **SessionStart banner surfaces friction**: when memdoctor detects active signals (correction-heavy, error-loop, etc.) for the current project, banner appends `friction: <signal>(Nx), ... (run: engram doctor)`. Top 2 signals, ranked by count.
 - `engram forget --expired`: delete ephemeral memories older than 7 days.

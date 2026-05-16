@@ -1,4 +1,4 @@
-"""Add tools/ to sys.path so tests can import mempatterns, etc."""
+"""Add tools/ to sys.path so tests can import memcapture, memdoctor, etc."""
 
 import sys
 from pathlib import Path
